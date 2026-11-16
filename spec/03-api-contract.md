@@ -351,11 +351,21 @@ Content-Type: multipart/form-data
 
 | 约束 | 值 | 来源 |
 |---|---|---|
-| 参考图数量上限 | 按渠道 `max_reference_images`（P1 实测待填）| 待实测 |
-| mask 支持 | 部分渠道支持局部遮罩编辑 | 待实测 |
-| `input_fidelity` | gpt-image-2 及以后官方已移除 | 已知 |
+| 参考图数量上限 | 按渠道 `max_reference_images`（实测至少 3 张）| P1 实测 |
+| 参考图提交方式 | multipart 同名字段多次提交（`image`）| P1 实测 |
+| mask 支持 | 部分渠道支持局部遮罩编辑 | P1 实测 |
+| **`mask` 内容校验** | **客户端必须预校验**（上游不校验，非法 mask 被静默忽略）| P1 实测 |
+| `input_fidelity` | gpt-image-2.6 渠道侧仍接受该参数（不报错），但官方已移除 | P1 实测 |
 
 **错误**：`NO_REFERENCE_IMAGE`（400）/ `REFERENCE_TOO_MANY`（400）
+
+**mask 预校验规则**（服务端执行，失败返回 400）：
+
+| 检查 | 不通过时的错误码 | 提示 |
+|---|---|---|
+| 文件存在且可解码为图片 | `INVALID_REQUEST` | 遮罩文件无法识别为图片 |
+| 格式为 PNG（含 alpha）| `INVALID_REQUEST` | 遮罩须为带透明通道的 PNG |
+| 尺寸与主图一致 | `INVALID_REQUEST` | 遮罩尺寸须与主图一致 |
 
 ---
 

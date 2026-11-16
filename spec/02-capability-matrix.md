@@ -30,9 +30,20 @@
   "transparent_allowed": ["png", "webp"],
   "compression_by_format": { "png": null, "jpeg": [0, 100], "webp": [0, 100] },
   "ignores_unknown_params": true,
+  "edits": {
+    "supported": true,
+    "max_reference_images": 3,
+    "supports_mask": true,
+    "validates_mask_content": false,
+    "accepts_input_fidelity": true
+  },
   "notes": []
 }
 ```
+
+> `edits.validates_mask_content: false` 表示**上游不校验遮罩文件**，
+> 客户端必须自行预校验（尺寸、格式、alpha 通道），否则用户会得到
+> 「遮罩没生效」却毫不知情的结果。
 
 ### 字段语义
 
@@ -63,6 +74,11 @@
 | compression | png 忽略压缩率；jpeg / webp 支持 0～100 |
 | 未知参数 | 静默忽略 |
 | n | 1、2 均支持 |
+| **edits** | ✅ 支持（multipart）|
+| 参考图数量 | 至少 3 张（上限待测）|
+| 编辑链路参数 | `input_fidelity`（high/low）、`complexity`、`output_format` 均接受 |
+| 编辑链路 n | ✅ n=2 支持 |
+| **mask** | ⚠️ **上游不校验 mask 内容**，非法 mask 被静默忽略 → 客户端须预校验 |
 
 ### ch-b · CH-B · gpt-image-2.6-flare
 

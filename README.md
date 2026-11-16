@@ -45,8 +45,11 @@
 
 | 文档 | 内容 |
 |---|---|
-| [`spec/01-platform-behavior.md`](spec/01-platform-behavior.md) | 各渠道逐项实测结果 + 错误报文样本 + 需求清单 |
+| [`spec/01-platform-behavior.md`](spec/01-platform-behavior.md) | 各渠道逐项实测结果 + 错误报文样本 + 需求清单（格式 F / 尺寸 S / 错误 E / 编辑 X）|
 | [`spec/02-capability-matrix.md`](spec/02-capability-matrix.md) | 渠道能力矩阵（结构化配置格式）+ 跨渠道对比 + 实现要求 |
+| [`spec/03-api-contract.md`](spec/03-api-contract.md) | 对外 API 契约：响应包络、错误码表、尺寸/格式处理策略、端点清单 |
+| [`spec/04-data-model.md`](spec/04-data-model.md) | 存储选型、11 张表的 DDL、迁移机制、并发与保留策略 |
+| [`spec/05-ui-ia.md`](spec/05-ui-ia.md) | 信息架构、关键界面设计、状态与反馈规范、用户旅程 |
 
 ### 渠道代号约定
 
@@ -105,13 +108,37 @@
 
 ---
 
-## 下一阶段（P1）待办
+## 阶段进度
+
+| 阶段 | 状态 | 产出 |
+|---|---|---|
+| **P0** 渠道行为规格 | ✅ 完成 | `spec/01`、`spec/02`、探测工具 |
+| **P1** 规格补全 | ✅ 完成 | `spec/03`（API 契约）、`spec/04`（数据模型）、`spec/05`（UI IA）|
+| **P1** edits 链路探测 | ✅ 完成 | 单参考图 / 多参考图 / 参数矩阵 / mask 行为 |
+| **P2** 骨架 | ⬜ 待开始 | 可启动的应用、配置存储、CI |
+
+### P1 edits 链路实测结论
+
+| 项 | 结论 |
+|---|---|
+| 单参考图编辑 | ✅ 200，产物 png 1024×1024 |
+| 参考图数量 | 1/2/3 张均 ✅（上限待测）|
+| `input_fidelity` | 2.6 渠道侧仍接受（不报错）|
+| `complexity` | ✅ 支持 |
+| `n=2` | ✅ 支持 |
+| **`mask` 内容校验** | ❌ **上游不校验**，非法 mask 被静默忽略 → 客户端必须预校验 |
+
+---
+
+## 待补探测
 
 | 项 | 说明 |
 |---|---|
-| 探测补全 | edits 链路（multipart）、参考图数量/角色、非 OpenAI 协议渠道（ComfyUI / RunningHub / 即梦 / 火山 / ModelScope）|
-| 规格补全 | `spec/03-api-contract.md`（对外 API 契约）、`spec/04-data-model.md`（存储结构）、`spec/05-ui-ia.md`（交互与信息架构）|
-| 仓库初始化 | git init、`LICENSE`（自有许可）、README、CI |
+| 参考图角色（role）语义 | 首图待编辑 / 其余为参考，渠道是否支持 |
+| edits 的 `output_format=webp` 复测 | 本次产物下载超时，未取到格式 |
+| CH-D 全组 | 当前分组下模型通道不可用 |
+| CH-F 的 gpt-image-2 参数矩阵 | 老模型规格不同 |
+| 非 OpenAI 协议渠道 | ComfyUI / RunningHub / 即梦 / 火山 / ModelScope |
 
 ---
 
