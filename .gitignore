@@ -1,0 +1,14 @@
+# 本地渠道配置与密钥（不入版本库）
+channels.json
+secrets.env
+
+# 探测原始数据（机器生成；含渠道标识的日志不外发）
+probe-data/*.json
+probe-data/*.log
+
+# 本地密钥与临时产物
+*.key
+.env
+tmp/
+__pycache__/
+*.pyc

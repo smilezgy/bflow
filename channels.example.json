@@ -1,0 +1,24 @@
+{
+  "_comment": "Bflow 渠道配置模板。把本文件复制为 channels.json 后填入真实渠道信息。channels.json 与 secrets.env 均已 gitignore，不会进版本库。",
+  "_schema": {
+    "id": "渠道代号，规格文档中只用代号，不出现真实渠道名与域名",
+    "name": "显示代号（建议用 CH-A / CH-B 这类中性代号）",
+    "base": "渠道 base URL。是否含 /v1 均可，脚本会自动处理",
+    "key_env": "secrets.env 中存放该渠道密钥的变量名",
+    "protocol": "openai-images | gemini | ark | apimart | async | ...（后续阶段补全）"
+  },
+  "channels": {
+    "ch-a": {
+      "name": "CH-A",
+      "base": "https://example-channel-a.invalid",
+      "key_env": "CH_A_KEY",
+      "protocol": "openai-images"
+    },
+    "ch-b": {
+      "name": "CH-B",
+      "base": "https://example-channel-b.invalid/v1",
+      "key_env": "CH_B_KEY",
+      "protocol": "openai-images"
+    }
+  }
+}
