@@ -144,14 +144,93 @@ def image_size(raw, ext):
     return 0, 0
 
 
-def fetch_image(url, timeout=180):
-    """下载图片 URL，返回 (bytes, content_type)。"""
+def fetch_image(url, timeout=300):
+    """下载图片 URL，返回 (bytes, content_type)。
+
+    urlopen 的 timeout 只约束单次 socket 操作，慢速传输可能长时间挂住，
+    因此另加一道墙钟上限，并放宽单次读超时（产物常有 1~3MB）。
+    """
     req = urllib.request.Request(url, headers={"User-Agent": "Bflow-Probe/0.1"})
-    with urllib.request.urlopen(req, timeout=timeout, context=ssl.create_default_context()) as r:
-        return r.read(), r.headers.get("Content-Type", "")
+    deadline = time.time() + timeout
+    with urllib.request.urlopen(req, timeout=120, context=ssl.create_default_context()) as r:
+        chunks = []
+        total = 0
+        while True:
+            if time.time() > deadline:
+                raise TimeoutError(f"下载超时（>{timeout}s）")
+            chunk = r.read(64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > 64 * 1024 * 1024:
+                raise ValueError("产物超过 64MB，停止下载")
+        return b"".join(chunks), r.headers.get("Content-Type", "")
 
 
 # ---------------------------------------------------------------- 请求
+
+
+def build_multipart(payload, boundary="----BflowProbeBoundary7a1c"):
+    """构造 multipart/form-data 请求体。
+
+    payload 里：
+      - 字符串/数字/布尔 → 普通字段
+      - ("file", 文件名, 字节) 三元组 → 文件字段
+      - ("files", [(字段名, 文件名, 字节), ...]) → 同名多文件字段
+    """
+    parts = []
+    for key, value in payload.items():
+        if isinstance(value, tuple) and len(value) == 3 and value[0] == "file":
+            _fname, filename, data = value
+            parts.append((key, filename, data))
+        elif isinstance(value, tuple) and len(value) == 2 and value[0] == "files":
+            for item in value[1]:
+                parts.append((key, item[1], item[2]))
+        else:
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            parts.append((key, None, str(value).encode()))
+
+    buf = bytearray()
+    for name, filename, data in parts:
+        buf += f"--{boundary}\r\n".encode()
+        if filename:
+            buf += (f'Content-Disposition: form-data; name="{name}"; '
+                    f'filename="{filename}"\r\n').encode()
+            buf += b"Content-Type: application/octet-stream\r\n\r\n"
+        else:
+            buf += f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode()
+        buf += data + b"\r\n"
+    buf += f"--{boundary}--\r\n".encode()
+    return bytes(buf), f"multipart/form-data; boundary={boundary}"
+
+
+def load_reference_images(count=1):
+    """准备参考图：优先用本地已有产物，缺失时生成一张纯色 PNG。"""
+    import glob
+    candidates = sorted(glob.glob(os.path.join(_ROOT, "probe-data", "ref-*.png")))
+    if not candidates:
+        candidates = sorted(glob.glob(os.path.join(_ROOT, "assets", "output", "*.png")))
+    if candidates:
+        out = []
+        for i in range(count):
+            path = candidates[i % len(candidates)]
+            with open(path, "rb") as f:
+                out.append((path, f.read()))
+        return out
+    # 兜底：生成一张 64x64 纯色 PNG（标准库 zlib + struct 即可）
+    def make_png(w=64, h=64, rgb=(220, 60, 60)):
+        import zlib
+        raw = b"".join(b"\x00" + bytes(rgb) * w for _ in range(h))
+        def chunk(tag, data):
+            c = tag + data
+            return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+        return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
+                + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
+    data = make_png()
+    return [("<generated>", data)] * count
 
 
 def call(channel, model, payload, endpoint="images/generations", timeout=240, image_bytes=None,
@@ -178,13 +257,22 @@ def _call_once(channel, model, payload, endpoint="images/generations", timeout=2
         url = f"{base}/{endpoint}"
     else:
         url = f"{base}/v1/{endpoint}"
-    key = read_env().get(CHANNELS[channel]["key_env"], "")
-    headers = {"Content-Type": "application/json", "User-Agent": "Bflow-Probe/0.1"}
+    key = read_env().get(CHANNELS[channel].get("key_env", ""), "")
+    headers = {"User-Agent": "Bflow-Probe/0.1"}
     if key:
         headers["Authorization"] = f"Bearer {key}"
 
-    body = json.dumps(payload).encode()
+    # multipart（编辑端点带参考图）走表单编码，其余走 JSON
+    if endpoint.endswith("/edits"):
+        body, content_type = build_multipart(payload)
+        headers["Content-Type"] = content_type
+    else:
+        headers["Content-Type"] = "application/json"
+        body = json.dumps(payload).encode()
+
     req = urllib.request.Request(url, data=body, method="POST", headers=headers)
+    # 生成接口可能耗时数分钟，这里给一个明确上限，避免无限等待
+    req.timeout = timeout
 
     started = time.time()
     try:
@@ -226,6 +314,8 @@ def _call_once(channel, model, payload, endpoint="images/generations", timeout=2
         except Exception:
             raw = b""
     elif first.get("url"):
+        # 记录产物 URL：即使下载失败，后续也能手动取回核验
+        result["artifact_url"] = first["url"]
         try:
             raw, ctype = fetch_image(first["url"])
             result["content_type"] = ctype
@@ -361,6 +451,107 @@ def probe_unknown_param(channel, model):
     return [r]
 
 
+# ---------------------------------------------------------------- edits 链路
+
+
+def probe_edits_basic(channel, model):
+    """编辑端点基本可用性：单参考图 + prompt。"""
+    cases = []
+    refs = load_reference_images(1)
+    path, data = refs[0]
+    payload = {
+        "model": model,
+        "prompt": "make the background blue",
+        "size": "1024x1024",
+        "image": ("file", os.path.basename(path), data),
+    }
+    r = call(channel, model, payload, endpoint="images/edits")
+    r["case"] = "edits:1ref"
+    cases.append(r)
+    print(f"  [{channel}/{model}] edits 1ref → {r['status']} "
+          f"实际={r.get('actual_format','-')} 尺寸={r.get('actual_size','-')} "
+          f"计费={r.get('billed')} {r.get('body','')[:200]}")
+    return cases
+
+
+def probe_edits_ref_count(channel, model):
+    """参考图数量上限：1 ~ 4 张。"""
+    cases = []
+    for n in [1, 2, 3, 4]:
+        refs = load_reference_images(n)
+        payload = {
+            "model": model,
+            "prompt": "combine these references into one clean icon",
+            "size": "1024x1024",
+            "image": ("files", [("file", os.path.basename(p), d) for p, d in refs]),
+        }
+        r = call(channel, model, payload, endpoint="images/edits")
+        r["case"] = f"edits:{n}ref"
+        cases.append(r)
+        print(f"  [{channel}/{model}] edits {n}ref → {r['status']} "
+              f"计费={r.get('billed')} {r.get('body','')[:180]}")
+    return cases
+
+
+def probe_edits_params(channel, model):
+    """编辑链路上的可选参数：input_fidelity / complexity / output_format。"""
+    cases = []
+    ref = load_reference_images(1)[0]
+    path, data = ref
+
+    def base_payload():
+        return {
+            "model": model,
+            "prompt": "change the background to a soft gradient",
+            "size": "1024x1024",
+            "image": ("file", os.path.basename(path), data),
+        }
+
+    variants = [
+        ("edits:input_fidelity=high", {"input_fidelity": "high"}),
+        ("edits:input_fidelity=low", {"input_fidelity": "low"}),
+        ("edits:complexity=low", {"complexity": "low"}),
+        ("edits:complexity=high", {"complexity": "high"}),
+        ("edits:output_format=webp", {"output_format": "webp"}),
+        ("edits:output_format=png", {"output_format": "png"}),
+        ("edits:quality=high", {"quality": "high"}),
+    ]
+    for case, extra in variants:
+        payload = base_payload()
+        payload.update(extra)
+        r = call(channel, model, payload, endpoint="images/edits")
+        r["case"] = case
+        cases.append(r)
+        print(f"  [{channel}/{model}] {case:32} → {r['status']} "
+              f"实际={r.get('actual_format','-')} 计费={r.get('billed')} "
+              f"{r.get('body','')[:150]}")
+    return cases
+
+
+def probe_edits_n_and_mask(channel, model):
+    """编辑链路的 n 参数与 mask 字段是否存在。"""
+    cases = []
+    ref = load_reference_images(1)[0]
+    path, data = ref
+    for label, extra in [
+        ("edits:n=2", {"n": 2}),
+        ("edits:mask_missing_file", {"mask": ("file", "mask.png", b"not-a-real-png")}),
+    ]:
+        payload = {
+            "model": model,
+            "prompt": "make it look like a pencil sketch",
+            "size": "1024x1024",
+            "image": ("file", os.path.basename(path), data),
+        }
+        payload.update(extra)
+        r = call(channel, model, payload, endpoint="images/edits")
+        r["case"] = label
+        cases.append(r)
+        print(f"  [{channel}/{model}] {label:26} → {r['status']} "
+              f"计费={r.get('billed')} {r.get('body','')[:180]}")
+    return cases
+
+
 GROUPS = {
     "formats": probe_formats,
     "quality": probe_quality,
@@ -370,6 +561,10 @@ GROUPS = {
     "compression": probe_compression,
     "n": probe_n,
     "unknown": probe_unknown_param,
+    "edits_basic": probe_edits_basic,
+    "edits_ref_count": probe_edits_ref_count,
+    "edits_params": probe_edits_params,
+    "edits_extra": probe_edits_n_and_mask,
 }
 
 
