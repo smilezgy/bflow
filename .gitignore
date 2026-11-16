@@ -2,9 +2,8 @@
 channels.json
 secrets.env
 
-# 探测原始数据（机器生成；含渠道标识的日志不外发）
-probe-data/*.json
-probe-data/*.log
+# 探测原始数据（机器生成；含渠道标识的日志与参考图不外发）
+probe-data/
 
 # 本地密钥与临时产物
 *.key
