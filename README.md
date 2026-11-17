@@ -12,6 +12,8 @@
 
 ## 快速开始
 
+**前置条件：Python 3.10+**（Windows 安装时记得勾选 *Add python.exe to PATH*）。
+
 ```bash
 # Windows
 run.bat
@@ -30,6 +32,20 @@ docker compose up -d --build
 启动后访问 <http://127.0.0.1:8000/>。
 
 首次使用：进入「渠道」→ 新增渠道（地址 + API Key）→ 编辑能力表 → 回工作台生成。
+
+### 找不到 Python？
+
+Windows 自带的 `WindowsApps\python.exe` 只是 Microsoft Store 的 **0 字节占位符**，
+执行它只会打印 "Python was not found" 并返回 9009，看起来像"没装 Python"。
+启动脚本会实际执行候选解释器来验证，**自动跳过这个占位符**。
+
+如果仍然找不到，任选一种：
+
+| 方式 | 操作 |
+|---|---|
+| 装正式版（推荐） | <https://www.python.org/downloads/>，安装时勾选 *Add python.exe to PATH* |
+| 放进项目目录 | 把解释器放到 `<项目目录>\python\python.exe`，脚本会自动识别 |
+| 显式指定 | `set PYTHON=C:\path\to\python.exe` 然后运行 `run.bat`（Linux/macOS 同理 `PYTHON=... ./start.sh`） |
 
 ### 命令行参数
 

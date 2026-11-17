@@ -1,0 +1,8 @@
+# 批处理文件必须用 CRLF —— cmd.exe 在纯 LF 下会解析异常
+*.bat text eol=crlf
+
+# shell 脚本用 LF
+*.sh text eol=lf
+
+# 默认按文本处理，避免 Windows 上误转二进制
+* text=auto
