@@ -33,3 +33,6 @@ static/__diag*.js
 .idea/
 .DS_Store
 Thumbs.db
+
+# WorkBuddy 工作区记忆（本地）
+.workbuddy/
