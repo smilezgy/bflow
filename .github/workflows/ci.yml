@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 自测（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 语法检查
+        run: python -c "import ast,pathlib; [ast.parse(p.read_text(encoding='utf-8')) for p in pathlib.Path('bflow').rglob('*.py')]; print('Python 语法 OK')"
+
+      - name: 协议自测（假上游，不产生费用）
+        run: python -u tools/selftest_protocols.py
+
+      - name: 多协议渠道自测（假上游，不产生费用）
+        run: python -u tools/selftest_multiproto.py
+
+      - name: 启动服务
+        run: python main.py --port 8000 &
+        shell: bash
+
+      - name: 等待就绪
+        run: |
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8000/api/health >/dev/null 2>&1; then
+              echo "服务就绪"; exit 0
+            fi
+            sleep 1
+          done
+          echo "服务未就绪"; exit 1
+
+      - name: API 冒烟测试
+        run: python -u tools/smoke_api.py
+
+      - name: 前端资源可达
+        run: |
+          for p in / /static/css/app.css /static/js/app.js /static/js/canvas.js /api/protocols; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000$p")
+            echo "$p → $code"
+            [ "$code" = "200" ] || exit 1
+          done
+
+      - name: 安装前端巡检依赖
+        run: npm install
+
+      - name: 前端运行时巡检（jsdom 真实求值模块图）
+        run: node tools/frontend_check.mjs http://127.0.0.1:8000
+
+  docker:
+    name: 镜像构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像
+        run: docker build -t bflow:ci .
+      - name: 冒烟运行
+        run: |
+          docker run -d --name bflow-ci -p 8001:8000 bflow:ci
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8001/api/health >/dev/null 2>&1; then
+              echo "容器就绪"; docker logs bflow-ci; exit 0
+            fi
+            sleep 1
+          done
+          docker logs bflow-ci; exit 1
