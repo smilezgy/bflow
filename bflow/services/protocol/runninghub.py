@@ -26,7 +26,7 @@ import httpx
 
 from .base import (DEFAULT_TIMEOUT, Artifact, UpstreamResult, base_headers,
                    connection_error, download, error_result, make_artifact,
-                   success, timeout_result)
+                   post_with_retry, success, timeout_result)
 from .errors import NormalizedError
 
 POLL_INTERVAL = 3.0
@@ -111,8 +111,9 @@ async def generate(base_url: str, api_key: str, req: dict, *,
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.post(f"{base}/task/openapi/create", headers=headers,
-                                     json=body, timeout=timeout)
+            resp = await post_with_retry(client, f"{base}/task/openapi/create",
+                                         headers=headers, json_body=body,
+                                         timeout=timeout)
     except httpx.TimeoutException:
         return timeout_result(time.time() - started)
     except Exception as exc:
@@ -161,8 +162,9 @@ async def generate(base_url: str, api_key: str, req: dict, *,
         await asyncio.sleep(POLL_INTERVAL)
         try:
             async with httpx.AsyncClient(follow_redirects=True) as client:
-                presp = await client.post(f"{base}/task/openapi/outputs",
-                                          headers=headers, json=poll_body, timeout=60.0)
+                presp = await post_with_retry(
+                    client, f"{base}/task/openapi/outputs",
+                    headers=headers, json_body=poll_body, timeout=60.0)
         except Exception:
             continue
         last_raw = presp.text or ""

@@ -29,8 +29,8 @@ from typing import Any
 import httpx
 
 from .base import (DEFAULT_TIMEOUT, Artifact, UpstreamResult, base_headers,
-                   connection_error, error_result, make_artifact, success,
-                   timeout_result)
+                   connection_error, error_result, make_artifact,
+                   post_with_retry, success, timeout_result)
 from .errors import NormalizedError
 
 # 轮询参数
@@ -142,8 +142,8 @@ async def generate(base_url: str, api_key: str, req: dict, *,
 
     try:
         async with httpx.AsyncClient(follow_redirects=True) as client:
-            resp = await client.post(submit_url, headers=headers, json=body,
-                                     timeout=timeout)
+            resp = await post_with_retry(client, submit_url, headers=headers,
+                                         json_body=body, timeout=timeout)
     except httpx.TimeoutException:
         return timeout_result(time.time() - started)
     except Exception as exc:

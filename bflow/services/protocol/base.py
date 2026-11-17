@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -23,6 +25,16 @@ from .imaging import ImageInfo, format_label, parse_image
 
 DEFAULT_TIMEOUT = 300.0
 MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
+
+# 传输中断重试开关。
+# 大图 base64 JSON 动辄 2~4MB，是最容易被中转带宽/代理/VPN 掐断的体积。
+# 中断意味着图已在上游生成并计费，只是没传回来 —— 同一请求重发一次在成本上
+# 不更差（用户手动再点也是一次计费），但**可能重复计费**，所以默认只重试一次，
+# 且允许用 BFLOW_TRANSPORT_RETRY=0 关掉。
+TRANSPORT_RETRY = str(
+    os.getenv("BFLOW_TRANSPORT_RETRY", "1")).strip().lower() not in {
+        "0", "false", "no", "off"
+    }
 
 
 @dataclass
@@ -129,12 +141,92 @@ def timeout_result(elapsed: float) -> UpstreamResult:
 
 
 def connection_error(exc: Exception, elapsed: float) -> UpstreamResult:
+    # 传输中断单独给可操作文案，别一律说"无法连接渠道"
+    if is_truncated_response(exc):
+        return transport_error(exc, elapsed)
     return UpstreamResult(
         ok=False, status=0, elapsed=elapsed,
         error=NormalizedError(code="CHANNEL_INTERNAL_ERROR",
                               message=f"无法连接渠道：{type(exc).__name__}",
                               hint="请检查渠道地址与网络连通性。",
                               retryable=True))
+
+
+# ------------------------------------------------------------------ 传输中断
+
+
+def is_truncated_response(exc: Exception) -> bool:
+    """判断异常是不是「响应体传到一半被掐断」，而不是连不上或超时。
+
+    httpx 在 Content-Length 声明的字节没收满就断开时抛 RemoteProtocolError，
+    报文典型为 "peer closed connection without sending complete message body
+    (received 11321 bytes, expected 3150013)"。不同渠道/代理措辞会变，
+    这里按特征词判断，不绑死某一句。
+    """
+    text = str(exc or "").lower()
+    return (
+        "peer closed connection" in text
+        or "incomplete message" in text
+        or "incomplete" in text
+        or "connection reset" in text
+        or "server disconnected" in text
+        or "remote protocol" in text
+    )
+
+
+def transport_error(exc: Exception, elapsed: float) -> UpstreamResult:
+    """把传输层异常翻译成用户能照着做的提示。"""
+    text = str(exc or "")
+    match = re.search(r"received (\d+) bytes, expected (\d+)", text, re.I)
+    retried = "已自动重试一次；" if TRANSPORT_RETRY else ""
+    if match:
+        got, want = int(match.group(1)), int(match.group(2))
+        pct = (got / want * 100.0) if want else 0.0
+        message = (
+            f"上游把图片数据传到一半就断开了：只收到 {got:,} / {want:,} 字节（{pct:.1f}%）。"
+            "图片其实已在上游生成，失败发生在回传阶段。"
+        )
+        hint = (
+            f"{retried}如果仍然失败：① 关闭代理/VPN 再试；"
+            "② 把尺寸降到 1024x1024 减小响应体积；"
+            "③ 换一个渠道，或换一个返回 URL 而非 base64 的渠道。"
+        )
+    else:
+        message = "上游连接中途断开，响应没有传完。"
+        hint = f"{retried}请检查代理/VPN，或换一个渠道重试。"
+    return UpstreamResult(
+        ok=False, status=0, elapsed=elapsed,
+        raw_body=text[:2000],
+        error=NormalizedError(
+            code="TRANSPORT_TRUNCATED",
+            message=message,
+            hint=hint,
+            retryable=True,
+            raw=text[:600]))
+
+
+async def post_with_retry(client: httpx.AsyncClient, url: str, *, headers: dict,
+                          json_body: dict | None = None,
+                          form: dict | None = None,
+                          files: list | None = None,
+                          timeout: float = DEFAULT_TIMEOUT) -> httpx.Response:
+    """统一的 POST，带「响应体截断」重试。
+
+    只对不带文件的请求重试：multipart 的文件句柄第一次已读到末尾，
+    重发会发出 0 字节文件。文件类请求要么不重试，要么由适配器按次重开文件。
+    每次调用最多重试一次，避免无限重发。
+    """
+    try:
+        return await post_json(client, url, headers=headers, json_body=json_body,
+                               form=form, files=files, timeout=timeout)
+    except (httpx.RemoteProtocolError, httpx.ReadError) as exc:
+        if (not TRANSPORT_RETRY or files or not is_truncated_response(exc)):
+            raise
+        import logging
+        logging.getLogger("bflow").warning(
+            "传输中断，同一请求重试一次（可能重复计费）：%s | %s", url, exc)
+        return await post_json(client, url, headers=headers, json_body=json_body,
+                               form=form, files=files, timeout=timeout)
 
 
 def success(artifacts: list[Artifact], *, status: int = 200,

@@ -77,6 +77,7 @@ python main.py --host 0.0.0.0 --port 9000 --data-root /data
 | `BFLOW_PORT` | `8000` | 监听端口 |
 | `BFLOW_DATA_ROOT` | 按系统惯例 | 数据根目录 |
 | `BFLOW_MASTER_KEY` | 自动生成 | 密钥加密主密钥 |
+| `BFLOW_TRANSPORT_RETRY` | `1` | 响应体传输中断时自动重发一次（可能重复计费）；设 `0` 关闭 |
 
 ---
 
@@ -91,6 +92,7 @@ python main.py --host 0.0.0.0 --port 9000 --data-root /data
 | `static/` | 前端（原生 ES 模块，无构建步骤）|
 | `tools/probe_platforms.py` | 黑盒探测工具（产出规格数据的手段）|
 | `tools/selftest_protocols.py` | 多协议离线自测（假上游，零费用）|
+| `tools/selftest_transport.py` | 传输中断重试自测（假上游，零费用）|
 | `tools/smoke_api.py` | API 冒烟测试（零费用）|
 | `tools/selftest_api.py` | 端到端自测（含真实生图，会计费）|
 

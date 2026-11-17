@@ -21,7 +21,8 @@ import httpx
 
 from .base import (DEFAULT_TIMEOUT, MAX_ARTIFACT_BYTES, Artifact, UpstreamResult,
                    base_headers, detect_deviations, download, endpoint_url,
-                   error_result, make_artifact, post_json, timeout_result)
+                   error_result, make_artifact, post_json, post_with_retry,
+                   timeout_result)
 from .errors import NormalizedError
 
 # 兼容旧引用：其他模块从本模块取 Artifact / UpstreamResult / detect_deviations
@@ -141,8 +142,9 @@ async def _post(client: httpx.AsyncClient, url: str, *,
     import time
     started = time.time()
     try:
-        resp = await post_json(client, url, headers=headers, json_body=json_body,
-                                form=fields, files=files, timeout=timeout)
+        resp = await post_with_retry(client, url, headers=headers,
+                                     json_body=json_body, form=fields,
+                                     files=files, timeout=timeout)
     except httpx.TimeoutException:
         return timeout_result(time.time() - started)
     except Exception as exc:
