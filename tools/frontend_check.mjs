@@ -97,13 +97,43 @@ const dom = new JSDOM(html, {
 });
 
 const { window } = dom;
+
+// GET 优先打真实服务（这样才能验证前后端契约对不对得上），
+// 写操作一律 mock 掉。
+//
+// 早先版本对所有请求都返回空 JSON，前端据此判断「还没有画布」，于是
+// 每次巡检都真的 POST /api/canvases —— 往用户的真实数据目录里塞一个
+// 空白画布。巡检工具不该污染被测系统。
+const MOCK_BODIES = {
+  'GET /api/canvases': { canvases: [] },
+  'GET /api/channels': { channels: [] },
+  'GET /api/assets/tags': { tags: [] },
+  'GET /api/assets': { assets: [] },
+  'GET /api/tasks': { tasks: [] },
+  'GET /api/app-info': { version: 'check' },
+  'GET /api/config': { settings: {} },
+};
+const json = (obj) => new Response(JSON.stringify(obj), {
+  status: 200,
+  headers: { 'Content-Type': 'application/json' },
+});
+const realFetch = globalThis.fetch;
+
 window.fetch = async (path, init) => {
   const url = String(path);
-  if (url.startsWith('/api/')) apiCalls.push(`${init?.method || 'GET'} ${url}`);
-  return new Response('{}', {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' },
-  });
+  const method = (init?.method || 'GET').toUpperCase();
+  if (!url.startsWith('/api/')) return json({});
+  apiCalls.push(`${method} ${url}`);
+  if (method !== 'GET') {
+    // 写操作：不落到真实服务
+    return json({ id: 'cv_mock', canvases: [] });
+  }
+  try {
+    const resp = await realFetch(`${BASE}${url}`, init);
+    if (resp.ok) return resp;
+  } catch { /* 服务不可达，降级到 mock */ }
+  const key = `${method} ${url.split('?')[0]}`;
+  return json(MOCK_BODIES[key] ?? {});
 };
 window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 window.HTMLCanvasElement.prototype.getContext = () => ({

@@ -271,6 +271,9 @@ check("保存画布 200", status == 200, r)
 status, r = call("GET", f"/api/canvases/{cid}")
 check("读画布 200 且节点在", status == 200 and
       len((r.get("data") or {}).get("nodes") or []) == 1, r)
+# 清理：自测不该在用户的数据目录里留下画布
+status, r = call("DELETE", f"/api/canvases/{cid}")
+check("删画布 200（自测不留垃圾）", status == 200, r)
 
 # ---------------------------------------------------------------- 配置
 print("\n--- 配置 ---")
