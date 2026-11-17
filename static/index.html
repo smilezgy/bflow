@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bflow</title>
+<link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
@@ -42,6 +43,103 @@
   <div id="toastLayer"></div>
   <div id="modalLayer"></div>
 </div>
+<script>
+/* 前端模块加载兜底。
+ *
+ * 模块图里只要有一个文件语法错误，整个图都会求值失败 —— 表现是
+ * 「页面能打开但点击全无反应」，因为 app.js 的 init() 从未执行。
+ * 这段脚本独立于模块图（非 type="module"，无任何 import），
+ * 即使模块全崩它照常运行，负责把沉默的失败变成看得见的提示。
+ */
+(function () {
+  var booted = false;
+  var reported = false;
+
+  // 暴露给巡检工具读取：状态 + 失败详情
+  window.__bflowBootState = { booted: false, reported: false, detail: '' };
+
+  window.__bflowBooted = function () {
+    booted = true;
+    window.__bflowBootState.booted = true;
+  };
+
+  // 测试钩子：巡检工具用它验证「提示层能正常渲染」，
+  // 不必真等 6 秒超时。无副作用 —— 顶多弹一次提示。
+  window.__bflowBootFail = function (detail) { report(detail || '巡检注入'); };
+
+  function report(detail) {
+    if (booted || reported) return;
+    reported = true;
+    window.__bflowBootState.reported = true;
+    window.__bflowBootState.detail = detail;
+    var box = document.createElement('div');
+    box.id = 'bflowBootError';
+    box.setAttribute('style', [
+      'position:fixed', 'inset:0', 'z-index:99999',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'background:#0f1115', 'color:#e6e8eb',
+      'font:14px/1.7 system-ui,-apple-system,"Segoe UI",sans-serif',
+      'padding:24px'
+    ].join(';'));
+    var card = document.createElement('div');
+    card.setAttribute('style', [
+      'max-width:560px', 'background:#171a21', 'border:1px solid #2a2f3a',
+      'border-radius:12px', 'padding:28px 30px'
+    ].join(';'));
+    var h = document.createElement('div');
+    h.textContent = '前端模块加载失败';
+    h.setAttribute('style', 'font-size:17px;font-weight:600;margin-bottom:12px;color:#ff8a80');
+    var p = document.createElement('div');
+    p.textContent = detail;
+    p.setAttribute('style', 'color:#a8b0bd;margin-bottom:18px;word-break:break-word');
+    var tip = document.createElement('div');
+    tip.textContent = '这通常是浏览器缓存了旧的前端文件。按 Ctrl+Shift+R 强制刷新即可；' +
+                      '若仍然失败，请查看服务端终端里的 Python 报错。';
+    tip.setAttribute('style', 'color:#a8b0bd;margin-bottom:18px');
+    var btn = document.createElement('button');
+    btn.textContent = '强制刷新页面';
+    btn.setAttribute('style', [
+      'background:#6366f1', 'color:#fff', 'border:0', 'border-radius:8px',
+      'padding:9px 18px', 'font:inherit', 'cursor:pointer', 'margin-right:10px'
+    ].join(';'));
+    btn.onclick = function () { location.reload(); };
+    var detailBtn = document.createElement('button');
+    detailBtn.textContent = '复制错误信息';
+    detailBtn.setAttribute('style', [
+      'background:transparent', 'color:#8b93a1', 'border:1px solid #2a2f3a',
+      'border-radius:8px', 'padding:9px 18px', 'font:inherit', 'cursor:pointer'
+    ].join(';'));
+    detailBtn.onclick = function () {
+      var text = 'Bflow 前端加载失败\n' + detail;
+      if (navigator.clipboard) navigator.clipboard.writeText(text);
+      detailBtn.textContent = '已复制';
+    };
+    card.appendChild(h);
+    card.appendChild(p);
+    card.appendChild(tip);
+    var bar = document.createElement('div');
+    bar.appendChild(btn);
+    bar.appendChild(detailBtn);
+    card.appendChild(bar);
+    box.appendChild(card);
+    document.body.appendChild(box);
+  }
+
+  window.addEventListener('error', function (e) {
+    if (booted) return;
+    var t = e.target;
+    if (t && t.tagName === 'SCRIPT') {
+      report('脚本未能加载：' + (t.src || '(内联脚本)'));
+    } else {
+      report('脚本执行出错：' + (e.message || e.type || '未知错误'));
+    }
+  }, true);
+
+  setTimeout(function () {
+    if (!booted) report('前端模块在 6 秒内没有完成初始化 —— 模块图可能存在语法错误。');
+  }, 6000);
+})();
+</script>
 <script type="module" src="/static/js/app.js"></script>
 </body>
 </html>

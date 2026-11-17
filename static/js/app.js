@@ -66,6 +66,8 @@ async function init() {
     applyTheme(cfg.settings?.['ui.theme'] || 'auto');
   } catch { applyTheme('auto'); }
   show('workbench');
+  // 通知 index.html 里的兜底脚本：前端已就绪，无需显示加载失败提示
+  window.__bflowBooted?.();
 }
 
 init();

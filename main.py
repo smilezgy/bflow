@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
 from bflow.api.response import ApiError, fail
 from bflow.api.routes import router
@@ -22,6 +23,26 @@ from bflow.config import APP_VERSION, ROOT_DIR, settings
 from bflow.db import init_db
 
 log = logging.getLogger("bflow")
+
+# 静态资源的缓存策略：必须每次回源校验。
+#
+# 背景：StaticFiles 默认不发 Cache-Control，浏览器只能按「距上次修改时间
+# 的 10%」这种启发式规则自己猜缓存时长。结果是改了前端代码、刷新页面，
+# 浏览器仍用磁盘缓存里的旧文件 —— 界面看起来正常，但跑的是旧逻辑。
+#
+# 这里显式发 no-cache：浏览器每次都带条件请求回服务端，服务端按 ETag 比对，
+# 内容没变就回 304（不重复传输），变了就回新文件。本地应用资源体积小、
+# 读取零成本，这个取舍没有代价，但能根治「改了不生效」。
+NO_CACHE = "no-cache, must-revalidate"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """给所有静态资源响应加上 Cache-Control: no-cache。"""
+
+    def file_response(self, *args, **kwargs) -> Response:
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = NO_CACHE
+        return resp
 
 
 def create_app() -> FastAPI:
@@ -60,11 +81,23 @@ def create_app() -> FastAPI:
     # 前端静态资源
     static_dir = ROOT_DIR / "static"
     if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+        app.mount("/static", NoCacheStaticFiles(directory=str(static_dir)),
+                  name="static")
 
         @app.get("/")
         async def index():
-            return FileResponse(static_dir / "index.html")
+            resp = FileResponse(static_dir / "index.html")
+            resp.headers["Cache-Control"] = NO_CACHE
+            return resp
+
+        @app.get("/favicon.ico", include_in_schema=False)
+        async def favicon():
+            icon = static_dir / "favicon.svg"
+            if icon.exists():
+                resp = FileResponse(icon, media_type="image/svg+xml")
+                resp.headers["Cache-Control"] = NO_CACHE
+                return resp
+            return Response(status_code=204)
 
     return app
 

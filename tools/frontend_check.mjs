@@ -87,7 +87,11 @@ vc.on('error', (...a) => errors.push(a.map(String).join(' ')));
 const apiCalls = [];
 const dom = new JSDOM(html, {
   url: BASE,
-  runScripts: 'outside-only',
+  // 'dangerously' 才会执行 HTML 里的内联脚本 —— index.html 里的加载兜底
+  // 脚本必须被执行，才能验证「模块崩了会给出提示」这条链路。
+  // 外部 <script src> 不会被加载（未开启 resources: 'usable'），
+  // 真正的模块代码由下面的 esbuild 产物注入。
+  runScripts: 'dangerously',
   pretendToBeVisual: true,
   virtualConsole: vc,
 });
@@ -125,6 +129,37 @@ console.log('[模块求值]');
 check('模块图求值无错误', errors.length === 0, errors.join(' | '));
 check('init() 触发了 API 调用', apiCalls.length > 0, apiCalls.join(', '));
 
+// 加载兜底：index.html 的内联脚本独立于模块图运行，负责把「模块崩了」
+// 这类沉默的失败变成可见提示。这里验证它没被误触发，且前端确实就绪。
+const bootState = window.__bflowBootState || null;
+console.log('\n[加载兜底]');
+check('加载兜底脚本已注入', !!bootState);
+check('加载兜底未误报', !bootState?.reported, bootState?.detail || '');
+check('前端已标记就绪', bootState?.booted === true);
+check('未出现加载失败提示层', !window.document.getElementById('bflowBootError'));
+
+// 反向验证：单独起一个「模块没加载」的壳，确认兜底真能弹出提示。
+// 用户的界面就靠它把沉默的失败变成看得见的原因，所以这条链路本身
+// 也必须被验证 —— 否则它可能一直坏着没人知道。
+{
+  const shell = new JSDOM(html, {
+    url: BASE,
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+    virtualConsole: new VirtualConsole(),
+  });
+  const w = shell.window;
+  w.__bflowBootFail?.('巡检注入的模拟失败');
+  const st = w.__bflowBootState;
+  check('兜底能触发（模拟模块加载失败）', st?.reported === true);
+  check('失败详情可读', !!(st?.detail && st.detail.includes('巡检注入')), st?.detail || '');
+  const layer = w.document.getElementById('bflowBootError');
+  check('提示层已渲染', !!layer);
+  check('提示层含强刷指引',
+    !!(layer && (layer.textContent || '').includes('Ctrl+Shift+R')));
+  try { w.close(); } catch { /* ignore */ }
+}
+
 console.log('\n[视图渲染]');
 for (const view of ['workbench', 'canvas', 'library', 'tasks', 'channels', 'settings']) {
   const before = errors.length;
@@ -156,4 +191,6 @@ if (FAILURES.length) {
   console.log('失败项：');
   for (const f of FAILURES) console.log(`  - ${f}`);
 }
+// 关掉 jsdom：清掉兜底脚本里那个 6 秒定时器，避免进程空等
+try { dom.window.close(); } catch { /* ignore */ }
 process.exit(FAIL ? 1 : 0);
