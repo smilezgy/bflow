@@ -96,11 +96,31 @@ def _build_edit_fields(req: dict) -> tuple[dict, list[tuple[str, str, bytes]]]:
         fields["n"] = "1"
 
     files: list[tuple[str, str, bytes]] = []
+
+    def as_file(item, default_name: str) -> tuple[str, str, bytes] | None:
+        """把一张上传图规范成 (字段名, 文件名, bytes) 三元组。
+
+        generation.py 的 _load_reference_files / _validate_masks 产出的就是
+        三元组（与 base.post_json 的 multipart 约定一致，ark/gemini 也按此
+        用 item[2] 取内容）。历史上这里误用 item.filename / item.data ——
+        tuple 没有这些属性，带参考图时必抛 AttributeError。保留对象格式
+        兼容只是防御，正常链路一律走三元组。
+        """
+        if isinstance(item, (list, tuple)) and len(item) >= 3:
+            return (str(item[0] or default_name), str(item[1] or "image"), item[2])
+        if hasattr(item, "filename") and hasattr(item, "data"):
+            return (default_name, str(item.filename), item.data)
+        return None
+
+    # 参考图以同名字段多次提交（实测 CH-A 接受）
     for item in req.get("reference_images") or []:
-        # 参考图以同名字段多次提交（实测 CH-A 接受）
-        files.append(("image", item.filename, item.data))
+        t = as_file(item, "image")
+        if t:
+            files.append(t)
     for item in req.get("masks") or []:
-        files.append(("mask", item.filename, item.data))
+        t = as_file(item, "mask")
+        if t:
+            files.append(t)
     return fields, files
 
 

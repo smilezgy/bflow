@@ -159,6 +159,29 @@ async def fetch_models(base_url: str, api_key: str, *,
                         elapsed=elapsed, raw_body=raw_text[:600])
 
 
+def classify_model(model_name: str) -> str:
+    """把上游模型粗分成 image / chat / video —— 只用于展示筛选。
+
+    目录接口本身不返回用途，只能按模型名里的通用关键词猜测；
+    这只是**筛选建议**，用户仍可在选择器里改归属，且不影响协议解析。
+    """
+    lc = (model_name or "").lower()
+    video_keys = (
+        "veo", "sora", "wan2", "wanx", "seedance", "kling", "hailuo",
+        "video", "t2v-", "i2v-", "s2v",
+    )
+    if any(k in lc for k in video_keys):
+        return "video"
+    image_keys = (
+        "banana", "image", "dalle", "dall-e", "imagen", "flux", "stable",
+        "sdxl", "midjourney", "ideogram", "z-image", "qwen-image", "klein",
+        "seedream", "text-to-image", "image-to-image",
+    )
+    if any(k in lc for k in image_keys):
+        return "image"
+    return "chat"
+
+
 def guess_protocol(model_name: str, default: str = "openai-images") -> str:
     """按模型名猜协议 —— 只是**建议**，最终由用户确认。
 

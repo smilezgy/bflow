@@ -484,6 +484,9 @@ def channel_detail(channel_id: str) -> dict | None:
     bindings = list_models(channel_id)
     ch["model_bindings"] = bindings
     ch["registered_models"] = [b["model"] for b in bindings]
+    # 工作台模型下拉只列**已启用**的模型 —— 渠道里取消勾选即不再可选。
+    # model_bindings / models 仍保留全量，供渠道管理界面维护。
+    ch["enabled_models"] = [b["model"] for b in bindings if b["enabled"]]
     # 渠道级 models 字段取并集：注册表有就优先，否则回落到能力表
     merged = list(ch["registered_models"])
     for m in ch["models"]:

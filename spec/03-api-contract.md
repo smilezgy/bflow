@@ -463,18 +463,27 @@ Content-Type: multipart/form-data
   全量列表 —— 聚合网关的 `/v1/models` 是 OpenAI 兼容的。
 - `auto_protocol`：按模型名建议协议（`gemini-*` → gemini、`doubao-*` → ark、
   `flux-*` → 工作流协议），**仅是建议**，最终由用户确认。
-- `apply`：`true` 则把拉到的模型直接登记进渠道。
+- `apply`：`true` 则把拉到的模型直接登记进渠道（兼容旧调用）。前端默认
+  `false`，先让用户在选择浮层里勾选，再走批量 `PUT /models` 写入。
+
+响应里的 `category`（`image` / `chat` / `video`）只是按模型名猜测的**筛选
+建议**，前端用它渲染分类标签与计数，不影响协议解析，也不落库。
 
 ```json
 {
   "ok": true,
   "data": {
     "models": [
-      { "model": "gpt-image-1",      "suggested_protocol": "openai-images",
+      { "model": "gpt-image-1",      "category": "image",
+        "suggested_protocol": "openai-images",
         "suggested_protocol_label": "OpenAI Images" },
-      { "model": "gemini-3-pro-image", "suggested_protocol": "gemini",
+      { "model": "gemini-3-pro-image", "category": "image",
+        "suggested_protocol": "gemini",
         "suggested_protocol_label": "Gemini（Google）" }
     ],
+    "all": ["gpt-image-1", "gemini-3-pro-image"],
+    "image_models": ["gpt-image-1", "gemini-3-pro-image"],
+    "chat_models": [], "video_models": [],
     "count": 2,
     "protocol_used": "openai-images",
     "applied": false,

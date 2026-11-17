@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import apimart, ark, comfyui, gemini, openai_images, runninghub
-from .listing import ModelListing, fetch_models, guess_protocol
+from .listing import ModelListing, classify_model, fetch_models, guess_protocol
 
 # 通用尺寸边界（实测跨渠道一致，属模型层约束）
 PIXEL_BOUNDS = {"min_pixels": 655360, "max_pixels": 8294400, "max_edge": 3840}

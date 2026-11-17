@@ -55,7 +55,8 @@ function chCard(ch) {
 
   card.append(el('div', { class: 'ch-meta' },
     el('div', { class: 'mono', text: maskUrl(ch.base_url) }),
-    el('div', {}, `协议 ${ch.protocol_label || ch.protocol} · 模型 ${(ch.models || []).length} 个`),
+    el('div', {}, `协议 ${ch.protocol_label || ch.protocol} · 模型 ${
+      (Array.isArray(ch.enabled_models) ? ch.enabled_models : (ch.models || [])).length} 个`),
   ));
 
   // 协议分布 —— 多协议渠道下，一个接入点里的模型可能分属不同协议
@@ -363,6 +364,166 @@ function protocolSelect(protocols, value) {
   return sel;
 }
 
+// ---------------------------------------------------------------- 模型选择浮层
+// 交互与参考项目一致：拉取只给出候选清单，用户勾选后才写入模型列表。
+// 分类（生图 / LLM / 视频）只用于筛选与计数，不改变模型的协议绑定。
+
+export function modelBadge(name) {
+  const text = String(name || '').toLowerCase();
+  if (text.includes('gpt-image')) return 'G';
+  if (text.includes('nano')) return 'N';
+  if (text.includes('qwen')) return 'Q';
+  if (text.includes('seedream')) return 'S';
+  if (text.includes('seedance')) return 'SD';
+  if (text.includes('jimeng') || text.includes('即梦')) return 'J';
+  if (text.includes('wan') || text.includes('万相')) return 'W';
+  if (text.includes('luma')) return 'L';
+  if (text.includes('vidu')) return 'V';
+  if (text.includes('alibaba') || text.includes('阿里')) return 'A';
+  if (text.includes('bytedance') || text.includes('字节')) return 'B';
+  return 'RH';
+}
+
+export function openModelPicker({ fetched, rows, defaultProtocol, onApply }) {
+  const presets = new Map();
+  for (const item of fetched || []) {
+    presets.set(item.model, {
+      category: item.category || 'chat',
+      protocol: item.suggested_protocol || defaultProtocol,
+    });
+  }
+  const ids = Array.from(new Set([
+    ...(fetched || []).map((x) => x.model),
+    ...Array.from(rows.keys()),
+  ])).sort();
+
+  const state = { category: {}, selected: {}, active: 'all', filter: '' };
+  for (const id of ids) {
+    state.category[id] = presets.get(id)?.category || 'image';
+    // 已启用的默认勾选；新拉取的、以及渠道里已取消勾选的不勾选。
+    state.selected[id] = rows.has(id) && rows.get(id).enabled !== false;
+  }
+
+  const overlay = el('div', { class: 'picker-overlay' });
+  const box = el('div', { class: 'picker-modal' });
+  const countBox = el('div', { class: 'picker-count' });
+  const filterInput = el('input', {
+    class: 'picker-search', type: 'text', placeholder: '按名称搜索模型…',
+    onInput: () => { state.filter = filterInput.value.trim().toLowerCase(); render(); },
+  });
+  const tabButtons = {};
+  const tabs = el('div', { class: 'picker-cat-tabs' });
+  for (const [cat, label] of [['all', '全部'], ['image', '生图'], ['chat', 'LLM'], ['video', '视频']]) {
+    const count = el('span', { class: 'cat-count' });
+    const btn = el('button', {
+      class: `picker-cat-tab${cat === 'all' ? ' active' : ''}`,
+      onClick: () => {
+        state.active = cat;
+        for (const [key, b] of Object.entries(tabButtons)) b.classList.toggle('active', key === cat);
+        render();
+      },
+    }, label, ' ', count);
+    tabButtons[cat] = btn;
+    tabs.append(btn);
+  }
+  const listBox = el('div', { class: 'picker-body' });
+  const sumChips = {};
+  const summary = el('div', { class: 'picker-summary' },
+    el('span', { class: 'picker-summary-title', text: '将应用：' }),
+    sumChips.image = el('span', { class: 'picker-sum-chip', text: '生图 0' }),
+    sumChips.chat = el('span', { class: 'picker-sum-chip', text: 'LLM 0' }),
+    sumChips.video = el('span', { class: 'picker-sum-chip', text: '视频 0' }),
+    sumChips.unsel = el('span', { class: 'picker-unselected', text: '未选 0' }),
+  );
+
+  const close = () => {
+    overlay.remove();
+    document.removeEventListener('keydown', onKey);
+  };
+  const onKey = (e) => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+  const render = () => {
+    const totals = { all: ids.length, image: 0, chat: 0, video: 0 };
+    const selecteds = { all: 0, image: 0, chat: 0, video: 0 };
+    for (const id of ids) {
+      const cat = state.category[id];
+      totals[cat]++;
+      if (state.selected[id]) { selecteds[cat]++; selecteds.all++; }
+    }
+    for (const cat of ['all', 'image', 'chat', 'video']) {
+      const node = tabButtons[cat].querySelector('.cat-count');
+      if (node) node.textContent = `${selecteds[cat]}/${totals[cat]}`;
+    }
+    const visible = ids.filter((id) => {
+      if (state.active !== 'all' && state.category[id] !== state.active) return false;
+      if (!state.filter) return true;
+      return id.toLowerCase().includes(state.filter);
+    });
+    countBox.textContent = `共 ${totals.all} 个模型 · 当前显示 ${visible.length} 个`;
+
+    clear(listBox);
+    for (const id of visible) {
+      const checked = state.selected[id];
+      listBox.append(el('div', {
+        class: `picker-row${checked ? ' has-sel' : ''}`,
+        title: id,
+        onClick: () => { state.selected[id] = !state.selected[id]; render(); },
+      },
+        el('div', { class: `picker-checkbox${checked ? ' checked' : ''}`, text: checked ? '✓' : '' }),
+        el('div', { class: 'picker-model-badge', text: modelBadge(id) }),
+        el('div', { class: 'picker-model-name' },
+          el('div', { class: 'picker-model-label', text: id })),
+      ));
+    }
+    if (!visible.length) listBox.append(el('div', { class: 'picker-empty', text: '无匹配' }));
+
+    sumChips.image.textContent = `生图 ${selecteds.image}`;
+    sumChips.chat.textContent = `LLM ${selecteds.chat}`;
+    sumChips.video.textContent = `视频 ${selecteds.video}`;
+    sumChips.unsel.textContent = `未选 ${totals.all - selecteds.all}`;
+  };
+
+  box.append(
+    el('div', { class: 'picker-head' },
+      el('div', {},
+        el('div', { class: 'picker-title', text: '从上游拉取的模型清单' }),
+        countBox),
+      el('div', { class: 'picker-close', text: '×', onClick: close })),
+    el('div', { class: 'picker-toolbar' }, filterInput, tabs),
+    listBox,
+    summary,
+    el('div', { class: 'picker-foot' },
+      el('button', { class: 'btn', text: '取消', onClick: close }),
+      el('button', {
+        class: 'btn primary', text: '应用到模型列表',
+        onClick: () => {
+          const next = new Map();
+          for (const [id, sel] of Object.entries(state.selected)) {
+            if (!sel) continue;
+            const old = rows.get(id);
+            const base = old || {
+              protocol: presets.get(id)?.protocol || defaultProtocol,
+              enabled: true,
+            };
+            // 在浮层里勾选 = 需要启用；重新勾选之前停用的模型也要打开。
+            next.set(id, {
+              ...base,
+              enabled: true,
+              dirty: base.dirty || base.enabled === false,
+            });
+          }
+          onApply(next);
+          close();
+        },
+      })),
+  );
+  overlay.append(box);
+  document.body.append(overlay);
+  render();
+}
+
 async function openModelManager(ch) {
   let protocols = [];
   try {
@@ -426,28 +587,39 @@ async function openModelManager(ch) {
     listBox.append(table);
   };
 
-  // ---- 拉取上游模型 ----
+  // ---- 拉取上游模型 → 勾选需要的 → 应用 ----
+  let lastFetched = [];
+  const applyPicked = (picked) => {
+    rows.clear();
+    for (const [model, st] of picked) rows.set(model, st);
+    renderList();
+    statusBox.textContent = `已应用 ${rows.size} 个模型；点下方「保存」写入渠道。`;
+  };
+  const showPicker = () => openModelPicker({
+    fetched: lastFetched, rows, defaultProtocol, onApply: applyPicked,
+  });
+
   const fetchBtn = el('button', { class: 'btn sm', text: '拉取模型' });
+  const chooseBtn = el('button', { class: 'btn sm', text: '选择模型' });
+  chooseBtn.addEventListener('click', () => {
+    if (!lastFetched.length) { fetchBtn.click(); return; }
+    showPicker();
+  });
   fetchBtn.addEventListener('click', async () => {
     fetchBtn.disabled = true;
+    chooseBtn.disabled = true;
     statusBox.textContent = '正在拉取上游模型列表…';
     try {
       const d = await api.channelModelsFetch(ch.id, { auto_protocol: true });
-      statusBox.textContent = `拉到 ${d.count} 个模型。协议已按模型名自动建议，请确认后保存。`;
-      for (const item of d.models || []) {
-        if (rows.has(item.model)) continue;
-        rows.set(item.model, {
-          protocol: item.suggested_protocol || defaultProtocol,
-          enabled: true,
-          dirty: true,
-        });
-      }
-      renderList();
+      lastFetched = d.models || [];
+      statusBox.textContent = `拉到 ${d.count} 个模型，请勾选需要的后应用。`;
+      showPicker();
     } catch (e) {
       statusBox.textContent = '';
       toastError(e);
     } finally {
       fetchBtn.disabled = false;
+      chooseBtn.disabled = false;
     }
   });
 
@@ -474,7 +646,7 @@ async function openModelManager(ch) {
       '聚合网关的模型列表混着多个厂商 —— 同一个接入点下，不同模型要走不同协议。' +
       '这里的协议只影响该模型的请求方式与可用选项，不影响渠道地址与密钥。' }),
     el('div', { class: 'row' },
-      fetchBtn,
+      fetchBtn, chooseBtn,
       el('span', { class: 'grow', style: { minWidth: '120px' } }, manualInput),
       addBtn),
     statusBox,

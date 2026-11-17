@@ -139,10 +139,16 @@ function selectChannel(id) {
   const c = ctx();
   c.selChannel.value = id;
   clear(c.selModel);
-  const models = ch.models || [];
+  // 只列渠道里**已启用**的模型 —— 在渠道管理中取消勾选后，工作台不再显示。
+  // 老数据没有 enabled_models 字段时，按绑定表的 enabled 过滤；再兜底 models。
+  const bindings = ch.model_bindings || [];
+  let models;
+  if (Array.isArray(ch.enabled_models)) models = ch.enabled_models;
+  else if (bindings.length) models = bindings.filter((b) => b.enabled !== false).map((b) => b.model);
+  else models = ch.models || [];
   // 模型下拉带上各自协议 —— 多协议渠道下，同一渠道的模型协议可能不同
   const protoOf = new Map();
-  for (const b of ch.model_bindings || []) protoOf.set(b.model, b.protocol_label || b.protocol);
+  for (const b of bindings) protoOf.set(b.model, b.protocol_label || b.protocol);
   for (const m of models) {
     const p = protoOf.get(m);
     c.selModel.append(el('option', { value: m, text: p ? `${m}（${p}）` : m }));

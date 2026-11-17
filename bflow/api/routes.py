@@ -169,16 +169,21 @@ async def fetch_channel_models(channel_id: str, body: ModelFetchRequest):
 
     default_protocol = ch.get("protocol") or "openai-images"
     items = []
+    grouped: dict[str, list[str]] = {"image": [], "chat": [], "video": []}
     for name in listing.models:
         suggested = (registry.suggest_protocol(name, default_protocol)
                      if body.auto_protocol else default_protocol)
+        category = registry.classify_model(name)
+        grouped.setdefault(category, []).append(name)
         items.append({
             "model": name,
+            "category": category,
             "suggested_protocol": suggested,
             "suggested_protocol_label": registry.label(suggested),
         })
 
-    # 直接登记：拉到的模型全部加上协议绑定
+    # 兼容旧调用：apply=true 时会把拉到的模型全部登记。
+    # 前端现在走「预览 → 用户勾选 → 批量 PUT」，默认不会传 apply。
     if body.apply:
         for item in items:
             try:
@@ -190,6 +195,10 @@ async def fetch_channel_models(channel_id: str, body: ModelFetchRequest):
     return ok({
         "models": items,
         "count": len(items),
+        "all": listing.models,
+        "image_models": grouped.get("image", []),
+        "chat_models": grouped.get("chat", []),
+        "video_models": grouped.get("video", []),
         "protocol_used": protocol,
         "applied": bool(body.apply),
         "channel": channels_svc.channel_detail(channel_id),

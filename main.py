@@ -105,9 +105,53 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+def _disable_console_quick_edit() -> None:
+    """关闭当前控制台的 QuickEdit，避免误点终端把服务卡死。
+
+    Windows 终端默认开着「快速编辑模式」：在窗口里点一下就进入文本选择态，
+    此时控制台会阻塞进程的 stdout 写入。uvicorn 每条请求都打访问日志，
+    所以误点之后的**第一个请求**就把事件循环卡住 —— 页面空白、刷新无响应；
+    在终端按任意键退出选择态，积压的日志一次性刷出，服务随即恢复。
+
+    只改当前进程的控制台模式，不改注册表、不影响用户其他窗口。
+    输出被重定向到文件时 GetConsoleMode 会失败，本来就不会卡，直接跳过。
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        STD_INPUT_HANDLE = 0xFFFFFFF6  # -10 as DWORD
+        ENABLE_QUICK_EDIT_MODE = 0x0040
+        ENABLE_EXTENDED_FLAGS = 0x0080
+
+        kernel32.GetStdHandle.argtypes = [ctypes.c_uint32]
+        kernel32.GetStdHandle.restype = ctypes.c_void_p
+        kernel32.GetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
+        kernel32.GetConsoleMode.restype = ctypes.c_int
+        kernel32.SetConsoleMode.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.SetConsoleMode.restype = ctypes.c_int
+
+        handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            return
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return
+        if mode.value & ENABLE_QUICK_EDIT_MODE:
+            kernel32.SetConsoleMode(
+                handle, (mode.value & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS)
+    except Exception:
+        # 控制台不可用时静默跳过，不能因为辅助设置让服务起不来。
+        pass
+
+
 def main() -> None:
     import argparse
     import uvicorn
+
+    _disable_console_quick_edit()
 
     parser = argparse.ArgumentParser(prog="bflow", description="Bflow —— AI 多模态创作工作台")
     parser.add_argument("--host", default=None, help="监听地址（默认 127.0.0.1）")

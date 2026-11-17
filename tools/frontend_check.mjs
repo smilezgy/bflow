@@ -229,6 +229,31 @@ for (const view of ['workbench', 'canvas', 'library', 'tasks', 'channels', 'sett
   }
 }
 
+// 工作台模型下拉必须与渠道里“已启用”的模型一致 —— 渠道里取消勾选后，
+// 生成界面不应再列出该模型（历史上这里列了全部登记模型）。
+{
+  const wb = window.document.getElementById('view-workbench');
+  const labelOf = (t) => [...(wb?.querySelectorAll('label.field') || [])]
+    .find((l) => (l.textContent || '').trim().startsWith(t));
+  const chSel = labelOf('渠道')?.querySelector('select');
+  const mSel = labelOf('模型')?.querySelector('select');
+  check('工作台有渠道与模型下拉', !!chSel && !!mSel);
+  if (chSel && mSel) {
+    let expected = null;
+    try {
+      const resp = await realFetch(`${BASE}/api/channels`);
+      const body = await resp.json();
+      const ch = (body.data?.channels || []).find((x) => x.id === chSel.value);
+      expected = ch?.enabled_models;
+    } catch { /* 服务不可达时这条契约断言不做假通过 */ }
+    const actual = [...mSel.options].map((o) => o.value).filter(Boolean);
+    check('模型下拉只列已启用模型',
+      Array.isArray(expected) && actual.length === expected.length &&
+      actual.every((m) => expected.includes(m)),
+      `下拉=${actual.length} 已启用=${Array.isArray(expected) ? expected.length : 'n/a'}`);
+  }
+}
+
 console.log('\n[最终状态]');
 check('全程无未捕获错误', errors.length === 0, errors.join(' | '));
 check('发出了 API 请求', apiCalls.length > 0, `${apiCalls.length} 个`);
