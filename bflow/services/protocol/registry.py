@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import apimart, ark, comfyui, gemini, openai_images, runninghub
+from .listing import ModelListing, fetch_models, guess_protocol
 
 # 通用尺寸边界（实测跨渠道一致，属模型层约束）
 PIXEL_BOUNDS = {"min_pixels": 655360, "max_pixels": 8294400, "max_edge": 3840}
@@ -59,6 +60,7 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
         "label": "OpenAI Images",
         "adapter": openai_images,
         "supports_edit": True,
+        "lists_models": True,
         "hint": "兼容 OpenAI Images 协议（/v1/images/generations 与 /v1/images/edits）。",
         "capability": _base_capability(
             output_formats={
@@ -78,6 +80,7 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
         "label": "Gemini（Google）",
         "adapter": gemini,
         "supports_edit": True,
+        "lists_models": True,
         "hint": "Google Generative Language 协议；尺寸用宽高比表达，产物格式由模型固定。",
         "capability": _base_capability(
             output_formats={"png": _fmt(True, True), "jpeg": _fmt(True, False)},
@@ -94,6 +97,7 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
         "label": "火山方舟（Ark）",
         "adapter": ark,
         "supports_edit": True,
+        "lists_models": False,
         "hint": "提交后轮询任务；尺寸支持像素串或 2K/4K 等级；参考图以 base64 传入。",
         "capability": _base_capability(
             output_formats={"png": _fmt(True, False), "jpeg": _fmt(True, False)},
@@ -109,6 +113,7 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
         "label": "APIMart",
         "adapter": apimart,
         "supports_edit": True,
+        "lists_models": False,
         "hint": "异步任务协议；参数按模型不同，通过渠道配置透传。",
         "capability": _base_capability(
             output_formats={"png": _fmt(True, False), "jpeg": _fmt(True, False)},
@@ -124,6 +129,7 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
         "label": "ComfyUI 工作流",
         "adapter": comfyui,
         "supports_edit": True,
+        "lists_models": False,
         "hint": "需要提供工作流 JSON 模板；格式与尺寸由工作流决定。",
         "capability": _base_capability(
             output_formats={"png": _fmt(True, False), "jpeg": _fmt(True, False),
@@ -141,6 +147,7 @@ PROTOCOLS: dict[str, dict[str, Any]] = {
         "label": "RunningHub 工作流",
         "adapter": runninghub,
         "supports_edit": True,
+        "lists_models": False,
         "hint": "需要提供 workflow_id 与提示词节点 id；格式与尺寸由工作流决定。",
         "capability": _base_capability(
             output_formats={"png": _fmt(True, False), "jpeg": _fmt(True, False),
@@ -199,8 +206,30 @@ def catalog() -> list[dict]:
             "label": meta["label"],
             "hint": meta.get("hint", ""),
             "supports_edit": meta["supports_edit"],
+            "lists_models": meta.get("lists_models", False),
         })
     return out
+
+
+def lists_models(protocol: str) -> bool:
+    """该协议是否支持拉取上游模型列表。"""
+    meta = PROTOCOLS.get(protocol or "")
+    return bool(meta.get("lists_models", False)) if meta else False
+
+
+async def list_upstream_models(protocol: str, base_url: str, api_key: str, *,
+                              extra_headers: dict | None = None,
+                              config: dict | None = None,
+                              timeout: float = 30.0) -> ModelListing:
+    """按协议拉取上游模型列表。"""
+    return await fetch_models(base_url, api_key, protocol=protocol or "openai-images",
+                              extra_headers=extra_headers, config=config,
+                              timeout=timeout)
+
+
+def suggest_protocol(model_name: str, default: str = "openai-images") -> str:
+    """按模型名猜协议（仅建议，最终由用户确认）。"""
+    return guess_protocol(model_name, default)
 
 
 async def dispatch(protocol: str, base_url: str, api_key: str, req: dict, *,

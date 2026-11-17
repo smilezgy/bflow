@@ -58,6 +58,22 @@ function chCard(ch) {
     el('div', {}, `协议 ${ch.protocol_label || ch.protocol} · 模型 ${(ch.models || []).length} 个`),
   ));
 
+  // 协议分布 —— 多协议渠道下，一个接入点里的模型可能分属不同协议
+  const protos = ch.protocols_in_use || [];
+  if (protos.length > 1) {
+    const used = new Map();
+    for (const b of ch.model_bindings || []) {
+      used.set(b.protocol, (used.get(b.protocol) || 0) + 1);
+    }
+    const line = el('div', { class: 'cap-line' },
+      el('span', { class: 'k', text: '协议分布' }));
+    for (const [pid, n] of used) {
+      line.append(el('span', { class: 'badge info',
+        text: `${protocolLabelOf(pid)} ×${n}` }));
+    }
+    card.append(el('div', { class: 'cap-list' }, line));
+  }
+
   // 输出格式能力
   const caps = el('div', { class: 'cap-list' });
   const formats = cap.output_formats || {};
@@ -91,6 +107,7 @@ function chCard(ch) {
 
   const bar = el('div', { class: 'row', style: { marginTop: '12px' } });
   bar.append(
+    el('button', { class: 'btn sm', text: '模型与协议', onClick: () => openModelManager(ch) }),
     el('button', { class: 'btn sm', text: '能力表', onClick: () => openCapabilityEditor(ch) }),
     el('button', {
       class: 'btn sm', text: '验证',
@@ -125,6 +142,19 @@ function maskUrl(url) {
 
 function sizePolicyLabel(p) {
   return { reject: '越界即报错', normalize_silently: '静默归一化', fixed: '固定输出' }[p] || (p || '未知');
+}
+
+/** 协议 id → 中文标签（协议清单是异步的，这里用一份静态映射兜底）。 */
+const PROTOCOL_LABELS = {
+  'openai-images': 'OpenAI Images',
+  'gemini': 'Gemini（Google）',
+  'ark': '火山方舟（Ark）',
+  'apimart': 'APIMart',
+  'comfyui': 'ComfyUI 工作流',
+  'runninghub': 'RunningHub 工作流',
+};
+function protocolLabelOf(id) {
+  return PROTOCOL_LABELS[id] || id;
 }
 
 async function doVerify(ch) {
@@ -307,6 +337,169 @@ async function openEditor(ch) {
             if (isNew) await api.channelCreate(payload);
             else await api.channelPatch(ch.id, payload);
             toastOk('已保存');
+            renderChannels(document.getElementById('view-channels'));
+          } catch (e) {
+            toastError(e);
+            return false;
+          }
+        },
+      },
+    ],
+  });
+}
+
+// ---------------------------------------------------------------- 模型管理
+//
+// 一个渠道 = 一个接入点。聚合网关（newapi / sub2api / openrouter）的模型
+// 列表里混着多个厂商，各自协议不同 —— 所以协议要逐模型指定。
+
+/** 协议选择器（带默认协议回落）。 */
+function protocolSelect(protocols, value) {
+  const sel = el('select', {});
+  for (const p of protocols) {
+    sel.append(el('option', { value: p.id, text: p.label }));
+  }
+  if (value && protocols.some((p) => p.id === value)) sel.value = value;
+  return sel;
+}
+
+async function openModelManager(ch) {
+  let protocols = [];
+  try {
+    const d = await api.protocols();
+    protocols = d.protocols || [];
+  } catch { /* 兜底 */ }
+  if (!protocols.length) {
+    protocols = [{ id: 'openai-images', label: 'OpenAI Images', hint: '' }];
+  }
+
+  const defaultProtocol = ch.protocol || 'openai-images';
+  const listBox = el('div', { class: 'col' });
+  const statusBox = el('div', { class: 'hint' });
+
+  // 当前已登记的模型 → 协议
+  let bindings = [];
+  try {
+    const d = await api.channelModels(ch.id);
+    bindings = d.models || [];
+  } catch (e) {
+    toastError(e);
+    return;
+  }
+
+  // 行状态：model → {protocol, enabled, dirty}
+  const rows = new Map();
+  for (const b of bindings) {
+    rows.set(b.model, { protocol: b.protocol, enabled: b.enabled !== false, dirty: false });
+  }
+
+  const renderList = () => {
+    clear(listBox);
+    if (!rows.size) {
+      listBox.append(el('div', { class: 'empty', text: '还没有登记模型。点上方「拉取模型」从上游获取，或手工添加。' }));
+      return;
+    }
+    const table = el('div', { class: 'cap-list' });
+    for (const [model, st] of rows) {
+      const sel = protocolSelect(protocols, st.protocol);
+      sel.addEventListener('change', () => {
+        st.protocol = sel.value;
+        st.dirty = true;
+      });
+      const enabled = el('input', { type: 'checkbox' });
+      enabled.checked = st.enabled;
+      enabled.addEventListener('change', () => {
+        st.enabled = enabled.checked;
+        st.dirty = true;
+      });
+      const del = el('button', {
+        class: 'btn sm danger', text: '移除',
+        onClick: () => {
+          rows.delete(model);
+          renderList();
+        },
+      });
+      table.append(el('div', { class: 'cap-line' },
+        el('span', { class: 'k mono grow', text: model }),
+        enabled, sel, del));
+    }
+    listBox.append(table);
+  };
+
+  // ---- 拉取上游模型 ----
+  const fetchBtn = el('button', { class: 'btn sm', text: '拉取模型' });
+  fetchBtn.addEventListener('click', async () => {
+    fetchBtn.disabled = true;
+    statusBox.textContent = '正在拉取上游模型列表…';
+    try {
+      const d = await api.channelModelsFetch(ch.id, { auto_protocol: true });
+      statusBox.textContent = `拉到 ${d.count} 个模型。协议已按模型名自动建议，请确认后保存。`;
+      for (const item of d.models || []) {
+        if (rows.has(item.model)) continue;
+        rows.set(item.model, {
+          protocol: item.suggested_protocol || defaultProtocol,
+          enabled: true,
+          dirty: true,
+        });
+      }
+      renderList();
+    } catch (e) {
+      statusBox.textContent = '';
+      toastError(e);
+    } finally {
+      fetchBtn.disabled = false;
+    }
+  });
+
+  // ---- 手工添加模型 ----
+  const manualInput = el('input', { type: 'text', placeholder: '模型名' });
+  const addBtn = el('button', { class: 'btn sm', text: '添加' });
+  const addManual = () => {
+    const name = manualInput.value.trim();
+    if (!name) { toastInfo('请填写模型名。'); return; }
+    if (rows.has(name)) { toastInfo('该模型已在列表中。'); return; }
+    rows.set(name, { protocol: defaultProtocol, enabled: true, dirty: true });
+    manualInput.value = '';
+    renderList();
+  };
+  addBtn.addEventListener('click', addManual);
+  manualInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addManual(); }
+  });
+
+  renderList();
+
+  const body = el('div', { class: 'col' },
+    el('div', { class: 'hint', text:
+      '聚合网关的模型列表混着多个厂商 —— 同一个接入点下，不同模型要走不同协议。' +
+      '这里的协议只影响该模型的请求方式与可用选项，不影响渠道地址与密钥。' }),
+    el('div', { class: 'row' },
+      fetchBtn,
+      el('span', { class: 'grow', style: { minWidth: '120px' } }, manualInput),
+      addBtn),
+    statusBox,
+    el('div', { class: 'panel-title', text: '模型清单' }),
+    listBox,
+  );
+
+  modal({
+    title: `模型与协议 · ${ch.display_name || ch.id}`,
+    body,
+    width: '680px',
+    actions: [
+      { label: '取消' },
+      {
+        label: '保存', kind: 'primary',
+        onClick: async () => {
+          const models = [];
+          for (const [model, st] of rows) {
+            models.push({
+              model, protocol: st.protocol, enabled: st.enabled, config: {},
+            });
+          }
+          try {
+            await api.channelModelsPut(ch.id, models);
+            toastOk('模型与协议已保存');
             renderChannels(document.getElementById('view-channels'));
           } catch (e) {
             toastError(e);

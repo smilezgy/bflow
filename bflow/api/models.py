@@ -53,6 +53,28 @@ class CapabilityUpdate(BaseModel):
     capability: dict[str, Any]
 
 
+class ModelBinding(BaseModel):
+    """一个模型的协议绑定。"""
+    model: str
+    protocol: str = ""
+    enabled: bool = True
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelBindingUpdate(BaseModel):
+    """批量设置模型协议绑定。"""
+    models: list[ModelBinding] = Field(default_factory=list)
+
+
+class ModelFetchRequest(BaseModel):
+    """拉取上游模型列表。"""
+    protocol: str = ""
+    # 是否把拉到的模型直接登记进渠道（默认只预览，不落库）
+    apply: bool = False
+    # 未显式指定协议时，是否按模型名自动推断
+    auto_protocol: bool = True
+
+
 class CanvasCreate(BaseModel):
     title: str = "未命名画布"
 

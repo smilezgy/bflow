@@ -144,9 +144,12 @@ CAP = {
 status, r = call("PUT", f"/api/channels/{CHANNEL_ID}/capability",
                  {"model": CHANNEL_MODEL, "capability": CAP})
 check("PUT capability 覆盖能力表", status == 200, r)
+# 按模型定位，不要依赖列表顺序（多协议渠道下会有多个模型）
+_caps = (r.get("data") or {}).get("capabilities") or []
+_cap_of_model = next((c for c in _caps if c.get("model") == CHANNEL_MODEL), {})
 check("能力来源标为 manual",
-      (r.get("data") or {}).get("capabilities", [{}])[0].get("source") == "manual",
-      r.get("data"))
+      _cap_of_model.get("source") == "manual",
+      _cap_of_model)
 
 # 密钥不回传
 status, r = call("GET", "/api/channels")

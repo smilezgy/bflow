@@ -57,6 +57,14 @@ export const api = {
   channelVerify: (id) => request('POST', `/api/channels/${id}/verify`),
   protocols: () => request('GET', '/api/protocols'),
 
+  // --- 模型与协议绑定 ---
+  channelModels: (id) => request('GET', `/api/channels/${id}/models`),
+  channelModelsPut: (id, models) => request('PUT', `/api/channels/${id}/models`, { models }),
+  channelModelDelete: (id, model) =>
+    request('DELETE', `/api/channels/${id}/models/${encodeURIComponent(model)}`),
+  channelModelsFetch: (id, body = {}) =>
+    request('POST', `/api/channels/${id}/models/fetch`, body),
+
   // --- 生图 ---
   generate: (b, o) => request('POST', '/api/images/generate', b, o),
 

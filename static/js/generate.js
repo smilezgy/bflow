@@ -134,13 +134,19 @@ async function loadChannels() {
 
 function selectChannel(id) {
   const ch = state.channels.find((x) => x.id === id);
-  if (!ch) return;
+  if !ch) return;
   state.channel = ch;
   const c = ctx();
   c.selChannel.value = id;
   clear(c.selModel);
   const models = ch.models || [];
-  for (const m of models) c.selModel.append(el('option', { value: m, text: m }));
+  // 模型下拉带上各自协议 —— 多协议渠道下，同一渠道的模型协议可能不同
+  const protoOf = new Map();
+  for (const b of ch.model_bindings || []) protoOf.set(b.model, b.protocol_label || b.protocol);
+  for (const m of models) {
+    const p = protoOf.get(m);
+    c.selModel.append(el('option', { value: m, text: p ? `${m}（${p}）` : m }));
+  }
   if (!models.length) {
     c.selModel.append(el('option', { value: '', text: '（该渠道尚未配置模型）' }));
   }

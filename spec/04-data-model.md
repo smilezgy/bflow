@@ -50,6 +50,8 @@
 ```
 channel 1───────n channel_capability_probe
    │
+   ├───────────n channel_model      （模型 → 协议绑定）
+   │
    ├───────────n task
    │              │ 1
    │              └──────n task_asset
@@ -68,13 +70,36 @@ asset 1───────n asset_tag
 
 ---
 
+### 2.1.1 多协议渠道：为什么协议要下沉到模型级
+
+一个**渠道 = 一个接入点**（`base_url` + 凭据）。但聚合网关
+（newapi / sub2api / openrouter 之类）把多个厂商的模型聚在同一个地址下，
+它的模型列表里混着不同厂商的模型：
+
+| 模型 | 需要的协议 | 请求形态 |
+|---|---|---|
+| `gpt-image-*` | `openai-images` | `POST /v1/images/generations` |
+| `gemini-*-image` | `gemini` | `POST /v1beta/models/{model}:generateContent` |
+| `doubao-seedream-*` | `ark` | 提交 + 轮询 |
+| `flux-*` / `sd-*` | `comfyui` / `runninghub` | 工作流 JSON |
+
+如果协议只存在于渠道层，一个聚合网关就**没法用**——它没法同时用
+OpenAI 方言和 Gemini 方言。因此：
+
+- `channel.protocol` 语义为 **默认协议**（模型未单独指定时的兜底）；
+- `channel_model.protocol` 是该模型**实际使用**的协议。
+
+协议解析优先级：**模型绑定 > 渠道默认协议 > `openai-images`**。
+
+---
+
 ### 2.2 `channel` —— 渠道
 
 ```sql
 CREATE TABLE channel (
     id              TEXT PRIMARY KEY,          -- ch-a / 用户自定义 UUID
     display_name    TEXT NOT NULL,             -- 界面显示名
-    protocol        TEXT NOT NULL,             -- openai-images / gemini / ark / apimart / async / comfyui
+    protocol        TEXT NOT NULL,             -- **默认协议**：模型未单独指定时的兜底
     base_url        TEXT NOT NULL,
     enabled         INTEGER NOT NULL DEFAULT 1,
     config_json     TEXT NOT NULL DEFAULT '{}',-- 协议特有配置（端点路径、额外头等）
@@ -88,6 +113,7 @@ CREATE TABLE channel (
 - `id` 用**中性代号**而非域名派生 —— 界面与日志不泄露渠道来源（与 P0 脱敏原则一致）。
 - `config_json` 承载协议差异，避免为每个渠道加字段。
 - 渠道能力**不在本表**，独立存（见 §2.3），因为它有独立的生命周期与来源标记。
+- `protocol` 是**默认协议**，不是唯一协议 —— 多协议渠道见 §2.1.1 与 §2.3.1。
 
 ### 2.3 `channel_capability` —— 渠道能力表
 
@@ -131,6 +157,43 @@ CREATE TABLE channel_capability (
   "notes": ["GIF 帧数由平台自行决定"]
 }
 ```
+
+### 2.3.1 `channel_model` —— 模型注册表与协议绑定
+
+```sql
+CREATE TABLE channel_model (
+    channel_id  TEXT NOT NULL REFERENCES channel(id) ON DELETE CASCADE,
+    model       TEXT NOT NULL,
+    protocol    TEXT NOT NULL,          -- 该模型实际使用的协议
+    enabled     INTEGER NOT NULL DEFAULT 1,
+    config_json TEXT NOT NULL DEFAULT '{}',  -- 模型级配置，覆盖渠道级
+    created_at  REAL NOT NULL,
+    updated_at  REAL NOT NULL,
+    PRIMARY KEY (channel_id, model)
+);
+```
+
+**为什么独立成表**（而不是把 `protocol` 塞进 `channel_capability`）：
+
+| 理由 | 说明 |
+|---|---|
+| 绑定 ≠ 能力 | 协议是「怎么发请求」，能力表是「这个模型能做什么」。前者由用户配置，后者由实测得出 |
+| 生命周期不同 | 改协议不该作废能力表记录本身；改协议只是让旧能力**失效** |
+| 需要模型级配置 | 同一网关下不同模型可能需要不同参数（如不同的工作流模板），`config_json` 逐模型覆盖 |
+| 拉取与登记分离 | 模型可以从上游拉取（`/v1/models`），拉取本身与能力表无关 |
+
+**关键约束**：
+
+1. **协议解析优先级**：模型绑定 > 渠道默认协议 > `openai-images`。
+2. **协议变更作废旧能力**：改了协议，该模型的能力表重置为新协议的默认值。
+   旧协议下实测出的结论（支持哪些格式、尺寸策略、能否编辑）对新协议不成立，
+   留着会误导前置校验（`03-api-contract.md` §2.3）。
+3. **能力表不跨协议继承**：读某模型的能力时，只继承**同协议**其他模型的能力表。
+   否则 Gemini 模型会继承到 OpenAI 模型的"支持 svg"，放行一个该协议
+   根本不接受的格式。
+
+**`config_json` 合并规则**：模型级覆盖渠道级（同名字段模型级优先），
+合并后的结果传给协议适配器。
 
 ### 2.4 `api_credential` —— 凭据
 

@@ -33,6 +33,22 @@ docker compose up -d --build
 
 首次使用：进入「渠道」→ 新增渠道（地址 + API Key）→ 编辑能力表 → 回工作台生成。
 
+### 聚合网关：一个渠道挂多个协议
+
+newapi / sub2api / openrouter 这类聚合网关把多个厂商的模型聚在同一个地址下，
+但每个模型要的协议不同（`gpt-image-*` 走 OpenAI 协议、`gemini-*-image` 走
+Gemini 协议、`doubao-seedream-*` 走方舟协议）。所以 Bflow 的协议绑在**模型**上，
+不是一个渠道只能有一种协议。
+
+1. 新增渠道时填聚合网关的地址与密钥，协议选该网关的**默认协议**（多数是 OpenAI 兼容）。
+2. 进「渠道」→ 该渠道的 **「模型与协议」** → 点 **「拉取模型」**，从 `/v1/models`
+   拉取模型清单。协议会按模型名自动建议（`gemini-*` → Gemini、`doubao-*` → 方舟、
+   `flux-*` → 工作流协议），**建议只是建议**，按需改。
+3. 保存。工作台生成时自动按所选模型走它自己的协议。
+
+同一个渠道下每个模型的能力表按各自协议独立计算 —— Gemini 模型不会显示 SVG 选项，
+方舟模型和 OpenAI 模型的尺寸策略各按各的。
+
 ### 找不到 Python？
 
 Windows 自带的 `WindowsApps\python.exe` 只是 Microsoft Store 的 **0 字节占位符**，
@@ -177,6 +193,7 @@ python main.py --host 0.0.0.0 --port 9000 --data-root /data
 | **P3-A** 协议扩展 | ✅ 完成 | 协议注册表 + Gemini / 方舟 / APIMart / ComfyUI / RunningHub 五个适配器 |
 | **P3-B** 画布增强 | ✅ 完成 | 拖线建边、节点就地生成、遮罩局部编辑 |
 | **P3-C** 打包分发 | ✅ 完成 | Dockerfile / compose / 桌面端 / CI |
+| **P3-D** 多协议渠道 | ✅ 完成 | 模型级协议绑定 + 上游模型拉取 + 按模型隔离能力表 |
 
 ### P3 交付内容
 
@@ -207,6 +224,16 @@ python main.py --host 0.0.0.0 --port 9000 --data-root /data
 | 容器 | `Dockerfile` + `docker-compose.yml`（非 root、健康检查、数据卷 `/data`）|
 | 桌面端 | `desktop.py`（pywebview 原生窗口）+ `packaging/Bflow.spec`（PyInstaller）|
 | CI | `.github/workflows/ci.yml`（多平台自测 + 镜像构建）|
+
+**P3-D 多协议渠道**
+
+| 项 | 说明 |
+|---|---|
+| 模型级协议绑定 | `channel_model` 表；协议解析优先级：模型绑定 > 渠道默认协议 > openai-images |
+| 上游模型拉取 | `GET /v1/models`（OpenAI 兼容）/ `GET /v1beta/models`（Gemini）；只列目录，不产生生成费用 |
+| 协议自动建议 | 按模型名推断（`gemini-*` → gemini、`doubao-*` → ark、`flux-*` → 工作流协议），仅建议待用户确认 |
+| 能力表按协议隔离 | 同渠道不同模型的能力表独立计算，跨协议不继承（否则 Gemini 模型会误显示 SVG 选项）|
+| 协议变更作废旧能力 | 改了协议即重置该模型能力表 —— 旧协议下的实测结论对新协议不成立 |
 
 
 ### P2 交付内容

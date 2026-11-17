@@ -22,7 +22,7 @@ from ..services import generation as gen_svc
 from ..services.protocol.imaging import format_label
 from .models import (AssetTagUpdate, CanvasCreate, CanvasRename, CanvasSave,
                      CapabilityUpdate, ChannelCreate, ChannelPatch, GenerateRequest,
-                     StorageSettings)
+                     ModelBindingUpdate, ModelFetchRequest, StorageSettings)
 from .response import ApiError, fail, ok
 
 router = APIRouter(prefix="/api")
@@ -85,28 +85,146 @@ async def put_capability(channel_id: str, body: CapabilityUpdate):
     return ok(channels_svc.channel_detail(channel_id))
 
 
+# ================================================================== 模型绑定
+#
+# 一个渠道 = 一个接入点。聚合网关（newapi / sub2api / openrouter）的模型
+# 列表混着多个厂商，各自协议不同 —— 所以协议绑在**模型**上，不是渠道上。
+
+
+@router.get("/channels/{channel_id}/models")
+async def list_channel_models(channel_id: str):
+    """列出该渠道登记的模型及其协议绑定。"""
+    if not channels_svc.get_channel(channel_id):
+        raise ApiError("NOT_FOUND", "渠道不存在。", status=404)
+    bindings = channels_svc.list_models(channel_id)
+    return ok({
+        "models": bindings,
+        "default_protocol": channels_svc.get_channel(channel_id).get("protocol"),
+    })
+
+
+@router.put("/channels/{channel_id}/models")
+async def put_channel_models(channel_id: str, body: ModelBindingUpdate):
+    """批量设置模型的协议绑定。
+
+    协议变更会重置该模型的能力表 —— 旧协议下实测出的结论对新协议不成立。
+    """
+    if not channels_svc.get_channel(channel_id):
+        raise ApiError("NOT_FOUND", "渠道不存在。", status=404)
+    for item in body.models:
+        model = (item.model or "").strip()
+        if not model:
+            continue
+        try:
+            channels_svc.set_model_binding(
+                channel_id, model, item.protocol or None,
+                enabled=item.enabled, config=item.config or None)
+        except ValueError as exc:
+            raise ApiError("INVALID_REQUEST", str(exc))
+    return ok({
+        "models": channels_svc.list_models(channel_id),
+        "channel": channels_svc.channel_detail(channel_id),
+    })
+
+
+@router.delete("/channels/{channel_id}/models/{model}")
+async def delete_channel_model(channel_id: str, model: str):
+    """移除一个模型绑定。"""
+    if not channels_svc.get_channel(channel_id):
+        raise ApiError("NOT_FOUND", "渠道不存在。", status=404)
+    if not channels_svc.delete_model_binding(channel_id, model):
+        raise ApiError("NOT_FOUND", "该渠道没有登记这个模型。", status=404)
+    return ok({"id": channel_id, "model": model})
+
+
+@router.post("/channels/{channel_id}/models/fetch")
+async def fetch_channel_models(channel_id: str, body: ModelFetchRequest):
+    """从上游拉取模型列表。
+
+    聚合网关的模型目录是 OpenAI 兼容的（`GET /v1/models`），因此即使
+    该网关下的模型分别走不同协议，拉目录这一步用哪个协议都能拿到全量列表。
+
+    只列目录，不触发生图 —— 不产生生成费用。
+    """
+    ch = channels_svc.get_channel(channel_id)
+    if not ch:
+        raise ApiError("NOT_FOUND", "渠道不存在。", status=404)
+
+    from ..services.protocol import registry
+
+    protocol = body.protocol or ch.get("protocol") or "openai-images"
+
+    secret = channels_svc.get_secret(
+        query_one("SELECT * FROM channel WHERE id = ?", (channel_id,)))
+
+    listing = await registry.list_upstream_models(
+        protocol, ch["base_url"], secret,
+        extra_headers=(ch.get("config") or {}).get("headers") or {},
+        config=ch.get("config") or {})
+
+    if not listing.ok:
+        return fail("CHANNEL_UNAVAILABLE", listing.error or "拉取模型列表失败。",
+                    status=502, hint=listing.hint or "",
+                    retryable=True, detail={"raw": listing.raw_body[:300]})
+
+    default_protocol = ch.get("protocol") or "openai-images"
+    items = []
+    for name in listing.models:
+        suggested = (registry.suggest_protocol(name, default_protocol)
+                     if body.auto_protocol else default_protocol)
+        items.append({
+            "model": name,
+            "suggested_protocol": suggested,
+            "suggested_protocol_label": registry.label(suggested),
+        })
+
+    # 直接登记：拉到的模型全部加上协议绑定
+    if body.apply:
+        for item in items:
+            try:
+                channels_svc.set_model_binding(
+                    channel_id, item["model"], item["suggested_protocol"])
+            except ValueError:
+                continue
+
+    return ok({
+        "models": items,
+        "count": len(items),
+        "protocol_used": protocol,
+        "applied": bool(body.apply),
+        "channel": channels_svc.channel_detail(channel_id),
+    })
+
+
 @router.post("/channels/{channel_id}/verify")
 async def verify_channel(channel_id: str):
     """触发一次实测以刷新能力表。
 
     会产生真实请求与费用，因此前端必须二次确认。
+
+    验证用的是**该模型实际绑定的协议** —— 多协议渠道下，不同模型要走
+    不同的协议，验证错协议会得到假结论。
     """
     ch = channels_svc.get_channel(channel_id)
     if not ch:
         raise ApiError("NOT_FOUND", "渠道不存在。", status=404)
-    model = (channels_svc.models_of(channel_id) or [""])[0]
-    if not model:
+    models = channels_svc.models_of(channel_id)
+    if not models:
+        models = [m["model"] for m in channels_svc.list_models(channel_id)]
+    if not models:
         raise ApiError("INVALID_REQUEST", "该渠道尚无模型，请先添加。")
+    model = models[0]
 
     secret = channels_svc.get_secret(
         query_one("SELECT * FROM channel WHERE id = ?", (channel_id,)))
     from ..services.protocol import registry
 
+    protocol = channels_svc.protocol_for(channel_id, model)
     req = {"model": model, "prompt": "a flat vector icon of a red apple, simple shapes",
            "size": "1024x1024", "output_format": "png"}
     result = await registry.dispatch(
-        ch.get("protocol") or "openai-images", ch["base_url"], secret, req,
-        config=ch.get("config") or {})
+        protocol, ch["base_url"], secret, req,
+        config=channels_svc.model_config_for(channel_id, model))
 
     if not result.ok:
         err = result.error

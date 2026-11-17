@@ -7,11 +7,13 @@ probe-data/
 
 # 运行时数据
 data/
+canvases/
 *.db
 *.db-wal
 *.db-shm
 master.key
 *.log
+*.bflow.json
 
 # Python
 __pycache__/

@@ -415,6 +415,77 @@ Content-Type: multipart/form-data
 
 `source` 取值：`probe`（实测）/ `manual`（人工覆盖）/ `default`（内置兜底）。
 
+### 5.1 模型与协议绑定
+
+一个渠道 = 一个接入点。聚合网关的模型列表混着多个厂商，各自协议不同
+（见 `04-data-model.md` §2.1.1），因此协议绑在**模型**上。
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `GET /api/channels/{id}/models` | GET | 列出该渠道登记的模型及其协议绑定 |
+| `PUT /api/channels/{id}/models` | PUT | 批量设置模型协议绑定 |
+| `DELETE /api/channels/{id}/models/{model}` | DELETE | 移除一个模型绑定 |
+| `POST /api/channels/{id}/models/fetch` | POST | 从上游拉取模型列表 |
+
+**`GET /api/channels/{id}/models`**
+
+```json
+{
+  "ok": true,
+  "data": {
+    "models": [
+      { "model": "gpt-image-1",          "protocol": "openai-images",
+        "protocol_label": "OpenAI Images", "enabled": true, "config": {} },
+      { "model": "gemini-3-pro-image",   "protocol": "gemini",
+        "protocol_label": "Gemini（Google）", "enabled": true, "config": {} }
+    ],
+    "default_protocol": "openai-images"
+  }
+}
+```
+
+**`PUT /api/channels/{id}/models`**
+
+```json
+{ "models": [
+    { "model": "gpt-image-1",        "protocol": "openai-images", "enabled": true },
+    { "model": "gemini-3-pro-image", "protocol": "gemini",         "enabled": true }
+] }
+```
+
+**`POST /api/channels/{id}/models/fetch`**
+
+```json
+{ "protocol": "", "auto_protocol": true, "apply": false }
+```
+
+- `protocol`：留空则用渠道默认协议。拉目录这一步用哪个协议通常都能拿到
+  全量列表 —— 聚合网关的 `/v1/models` 是 OpenAI 兼容的。
+- `auto_protocol`：按模型名建议协议（`gemini-*` → gemini、`doubao-*` → ark、
+  `flux-*` → 工作流协议），**仅是建议**，最终由用户确认。
+- `apply`：`true` 则把拉到的模型直接登记进渠道。
+
+```json
+{
+  "ok": true,
+  "data": {
+    "models": [
+      { "model": "gpt-image-1",      "suggested_protocol": "openai-images",
+        "suggested_protocol_label": "OpenAI Images" },
+      { "model": "gemini-3-pro-image", "suggested_protocol": "gemini",
+        "suggested_protocol_label": "Gemini（Google）" }
+    ],
+    "count": 2,
+    "protocol_used": "openai-images",
+    "applied": false,
+    "channel": { "...": "渠道详情" }
+  }
+}
+```
+
+**协议解析优先级**：模型绑定 > 渠道默认协议 > `openai-images`。
+改协议会**重置该模型的能力表**（旧协议下的实测结论对新协议不成立）。
+
 ---
 
 ## 6. 配置与存储
