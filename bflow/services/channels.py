@@ -178,6 +178,10 @@ def _channel_to_dict(row) -> dict:
 
 def set_capability(channel_id: str, model: str, capability: dict,
                    source: str = "manual", verified_at: float | None = None) -> None:
+    # 空模型名会污染能力表（前端会渲染出一个空模型选项），直接拒绝。
+    model = (model or "").strip()
+    if not model:
+        return
     now = time.time()
     payload = json.dumps(capability, ensure_ascii=False)
     existing = query_one(
@@ -193,6 +197,22 @@ def set_capability(channel_id: str, model: str, capability: dict,
             "INSERT INTO channel_capability (channel_id, model, capability_json,"
             " source, verified_at) VALUES (?,?,?,?,?)",
             (channel_id, model, payload, source, verified_at or (now if source == "probe" else None)))
+
+
+def _merge_defaults(channel_id: str, cap: dict) -> dict:
+    """用协议默认能力补齐缺失字段。
+
+    缺字段不能丢 —— 前端按 `output_formats` 渲染格式下拉、按 `quality_levels`
+    渲染档位，缺了就会退化成"只显示 PNG"或只显示 auto。
+    """
+    ch = query_one("SELECT protocol FROM channel WHERE id = ?", (channel_id,))
+    protocol = ch["protocol"] if ch else "openai-images"
+    merged = dict(cap) if isinstance(cap, dict) else {}
+    for key, value in registry.default_capability(protocol).items():
+        if key in ("source", "verified_at"):
+            continue
+        merged.setdefault(key, value)
+    return merged
 
 
 def get_capability(channel_id: str, model: str) -> dict:
@@ -217,33 +237,41 @@ def get_capability(channel_id: str, model: str) -> dict:
     except Exception:
         cap = {}
     # 兜底补齐缺失字段，避免旧数据导致前端崩
-    ch = query_one("SELECT protocol FROM channel WHERE id = ?", (channel_id,))
-    protocol = ch["protocol"] if ch else "openai-images"
-    for key, value in registry.default_capability(protocol).items():
-        if key in ("source", "verified_at"):
-            continue
-        cap.setdefault(key, value)
+    cap = _merge_defaults(channel_id, cap)
     cap["source"] = row["source"]
     cap["verified_at"] = row["verified_at"]
     return cap
 
 
 def list_capabilities(channel_id: str) -> list[dict]:
+    """列出该渠道所有模型的能力表。
+
+    每条都要补齐协议默认能力 —— 前端按 `output_formats` 渲染格式下拉，
+    若返回裸 JSON（历史上手工存过空表），前端会退化成"只显示 PNG"。
+    """
     rows = query("SELECT * FROM channel_capability WHERE channel_id = ?", (channel_id,))
     out = []
     for r in rows:
+        model = (r["model"] or "").strip()
+        if not model:
+            continue
         try:
             cap = json.loads(r["capability_json"])
         except Exception:
             cap = {}
-        out.append({"model": r["model"], "capability": cap,
+        if not isinstance(cap, dict):
+            cap = {}
+        merged = _merge_defaults(channel_id, cap)
+        merged["source"] = r["source"]
+        merged["verified_at"] = r["verified_at"]
+        out.append({"model": model, "capability": merged,
                     "source": r["source"], "verified_at": r["verified_at"]})
     return out
 
 
 def models_of(channel_id: str) -> list[str]:
     rows = query("SELECT model FROM channel_capability WHERE channel_id = ?", (channel_id,))
-    return [r["model"] for r in rows]
+    return [r["model"] for r in rows if (r["model"] or "").strip()]
 
 
 def channel_detail(channel_id: str) -> dict | None:
@@ -253,7 +281,7 @@ def channel_detail(channel_id: str) -> dict | None:
         return None
     caps = list_capabilities(channel_id)
     ch["capabilities"] = caps
-    ch["models"] = [c["model"] for c in caps]
+    ch["models"] = [c["model"] for c in caps if (c.get("model") or "").strip()]
     # 可信度：最近一次实测时间
     verified = [c["verified_at"] for c in caps if c["verified_at"]]
     ch["last_verified_at"] = max(verified) if verified else None

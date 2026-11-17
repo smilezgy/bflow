@@ -44,7 +44,11 @@ class StoredAsset:
         return {
             "id": self.id,
             "kind": self.kind,
-            "url": f"/api/assets/{self.id}",
+            # url 必须是可直接显示/下载的二进制地址 —— 前端拿它当 <img src>
+            # 和下载链接用。指向元信息端点会拿到 JSON，图片渲染不出来。
+            "url": f"/api/assets/{self.id}/raw",
+            # api_url 指向元信息端点，需要读取宽高/格式等字段时用这个。
+            "api_url": f"/api/assets/{self.id}",
             "format": self.format,
             "width": self.width,
             "height": self.height,
