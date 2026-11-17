@@ -42,6 +42,9 @@ jobs:
       - name: 多协议渠道自测（假上游，不产生费用）
         run: python -u tools/selftest_multiproto.py
 
+      - name: 传输中断重试自测（假上游，不产生费用）
+        run: python -u tools/selftest_transport.py
+
       - name: 启动服务
         run: python main.py --port 8000 &
         shell: bash
