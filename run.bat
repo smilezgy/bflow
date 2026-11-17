@@ -134,6 +134,34 @@ for %%A in (%*) do (
   set "PREV=%%A"
 )
 
+rem ===============================================================
+rem  Refuse to start when the port is already taken.
+rem
+rem  A stale instance silently holding the port is a nasty trap:
+rem  the new server fails to bind, the browser keeps talking to the
+rem  old one, and the page looks like it "updated" but does not.
+rem ===============================================================
+set "PORTPID="
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr "LISTENING" ^| findstr ":%SHOWPORT% "') do set "PORTPID=%%P"
+if defined PORTPID (
+  set /a NEWPORT=%SHOWPORT%+1 2>nul
+  if not defined NEWPORT set "NEWPORT=8001"
+  echo.
+  echo [X] Port %SHOWPORT% is already in use by PID %PORTPID%.
+  echo.
+  echo     Most likely another Bflow instance is still running.
+  echo     Stop it, or start on a different port:
+  echo.
+  echo       run.bat --port !NEWPORT!
+  echo.
+  echo     To inspect and stop the holder:
+  echo       tasklist ^| findstr %PORTPID%
+  echo       taskkill /F /PID %PORTPID%
+  echo.
+  pause
+  exit /b 1
+)
+
 echo.
 echo Starting Bflow...
 echo Open: http://%SHOWHOST%:%SHOWPORT%/
