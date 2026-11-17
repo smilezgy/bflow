@@ -38,3 +38,7 @@ Thumbs.db
 
 # WorkBuddy 工作区记忆（本地）
 .workbuddy/
+
+# 前端巡检工具的依赖（开发期用）
+node_modules/
+tools/js/

@@ -134,7 +134,7 @@ async function loadChannels() {
 
 function selectChannel(id) {
   const ch = state.channels.find((x) => x.id === id);
-  if !ch) return;
+  if (!ch) return;
   state.channel = ch;
   const c = ctx();
   c.selChannel.value = id;
