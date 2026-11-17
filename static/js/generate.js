@@ -167,24 +167,28 @@ function applyCapability() {
   const formats = cap?.output_formats || {};
   const fmtKeys = Object.keys(formats);
 
+  // 「格式：默认」排在最前且默认选中 —— 用户不手动选就不带 output_format，
+  // 由渠道按自身默认输出（实测基本都是 PNG）。这与 Infinite-Canvas 的
+  // online.html 逻辑一致：`value=""` 表示默认，请求体里不放该字段。
+  // 注意：不要改成默认选 PNG —— 那样会把 output_format 硬发给不支持该
+  // 字段的渠道，反而制造 400。
+  const previousFormat = c.selFormat.value;
   clear(c.selFormat);
-  if (!fmtKeys.length) {
-    c.selFormat.append(el('option', { value: 'png', text: 'PNG' }));
-  } else {
-    // 把 png 排到首位并显式选中 —— 用户不手动选格式时一律默认 PNG，
-    // 不依赖能力表 JSON 的键顺序（有的渠道 svg/webp 排在前面）。
-    const ordered = fmtKeys.includes('png')
-      ? ['png', ...fmtKeys.filter((k) => k !== 'png')] : fmtKeys;
-    for (const k of ordered) {
-      const info = formats[k] || {};
-      const mark = info.supported === false ? '（不支持）'
-        : (info.honors_request === false ? '（该渠道不保证按此格式出图）' : '');
-      c.selFormat.append(el('option', { value: k, text: formatLabel(k) + mark }));
-    }
+  c.selFormat.append(el('option', { value: '', text: '格式：默认' }));
+  // png / jpeg / webp 是稳定选项；gif / svg 只有能力表明确支持时才列出
+  const stable = ['png', 'jpeg', 'webp'].filter((k) => k in formats);
+  const advanced = ['gif', 'svg'].filter((k) => formats[k] && formats[k].supported !== false);
+  for (const k of [...stable, ...advanced]) {
+    const info = formats[k] || {};
+    const mark = info.supported === false ? '（不支持）'
+      : (info.honors_request === false ? '（该渠道不保证按此格式出图）' : '');
+    const label = k === 'gif' ? 'GIF（动图）' : k === 'svg' ? 'SVG（矢量）' : formatLabel(k);
+    c.selFormat.append(el('option', { value: k, text: `格式：${label}${mark}` }));
   }
-  if ([...c.selFormat.options].some((o) => o.value === 'png')) {
-    c.selFormat.value = 'png';
-  }
+  // 切换模型/渠道后，若之前选的格式在新能力表里不可用则回落到「默认」，
+  // 而不是留着一个悬空的 value。
+  const stillValid = [...c.selFormat.options].some((o) => o.value === previousFormat);
+  c.selFormat.value = stillValid ? previousFormat : '';
 
   // 尺寸
   clear(c.selSize);
@@ -228,11 +232,14 @@ function applyFormatRules() {
     c.selCompression.disabled = true;
   }
 
-  // 透明背景要求格式支持 alpha
+  // 透明背景要求格式支持 alpha。
+  // 「默认」按 PNG 处理 —— 渠道默认输出就是 PNG，支持透明通道；
+  // 不能因为 fmt 是空串就把用户刚选的透明背景重置掉。
+  const effectiveFmt = fmt || 'png';
   const allowed = cap?.transparent_formats || ['png', 'webp'];
-  if (c.selBackground.value === 'transparent' && !allowed.includes(fmt)) {
+  if (c.selBackground.value === 'transparent' && !allowed.includes(effectiveFmt)) {
     c.selBackground.value = '';
-    toastInfo(`${formatLabel(fmt)} 不支持透明背景，已重置背景设置。`);
+    toastInfo(`${fmt ? formatLabel(fmt) : '默认格式'} 不支持透明背景，已重置背景设置。`);
   }
 
   // SVG 仅支持单张
@@ -292,13 +299,15 @@ async function doGenerate() {
     model: c.selModel.value,
     size: c.selSize.value,
     count: Number(c.cnt.value) || 1,
-    output_format: c.selFormat.value,
     background: c.selBackground.value,
     quality: c.selQuality.value,
     complexity: c.selComplexity.value,
     reference_images: state.refs.map((r) => r.id),
     masks: state.masks.map((m) => m.id),
   };
+  // 「格式：默认」= value="" → 不发 output_format，由渠道按默认输出（PNG）。
+  // 只有用户显式选了格式才带上，避免给不支持该字段的渠道制造 400。
+  if (c.selFormat.value) body.output_format = c.selFormat.value;
   if (!c.selCompression.disabled) {
     body.output_compression = Number(c.selCompression.value);
   }

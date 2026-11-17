@@ -206,6 +206,29 @@ for (const view of ['workbench', 'canvas', 'library', 'tasks', 'channels', 'sett
   }
 }
 
+// 工作台「格式：默认」：不手动选就不带 output_format，由渠道按默认（PNG）出图。
+// 这是 Infinite-Canvas 的既有逻辑，也是用户明确要求的行为。
+{
+  const wb = window.document.getElementById('view-workbench');
+  const fmtSel = [...(wb?.querySelectorAll('select') || [])]
+    .find((s) => [...s.options].some((o) => o.textContent.includes('格式：默认')));
+  check('工作台有格式下拉', !!fmtSel);
+  if (fmtSel) {
+    check('格式下拉第一项是「格式：默认」',
+      (fmtSel.options[0]?.textContent || '').includes('格式：默认'),
+      fmtSel.options[0]?.textContent || '');
+    check('格式默认项值为空', fmtSel.options[0]?.value === '',
+      String(fmtSel.options[0]?.value));
+    check('默认选中「格式：默认」', fmtSel.value === '', `当前=${fmtSel.value}`);
+    const labels = [...fmtSel.options].map((o) => o.textContent);
+    // GIF/SVG 由能力表决定，不能强求齐全；但 PNG 是稳定基础项，必须有。
+    check('至少提供 PNG 选项',
+      labels.some((l) => l.includes('格式：PNG')), labels.join(' | '));
+    check('格式项带统一「格式：」前缀',
+      labels.every((l) => l.startsWith('格式：')), labels.join(' | '));
+  }
+}
+
 console.log('\n[最终状态]');
 check('全程无未捕获错误', errors.length === 0, errors.join(' | '));
 check('发出了 API 请求', apiCalls.length > 0, `${apiCalls.length} 个`);
