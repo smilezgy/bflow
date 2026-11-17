@@ -93,7 +93,8 @@ python main.py --host 0.0.0.0 --port 9000 --data-root /data
 | `tools/probe_platforms.py` | 黑盒探测工具（产出规格数据的手段）|
 | `tools/selftest_protocols.py` | 多协议离线自测（假上游，零费用）|
 | `tools/selftest_transport.py` | 传输中断重试自测（假上游，零费用）|
-| `tools/smoke_api.py` | API 冒烟测试（零费用）|
+| `tools/smoke_api.py` | API 冒烟测试（零费用，默认 PNG）|
+| `tools/frontend_lightbox_check.mjs` | 图片预览组件自测（jsdom，零费用）|
 | `tools/selftest_api.py` | 端到端自测（含真实生图，会计费）|
 
 > **不包含任何被参考项目的源码**。规格文档只描述**可观察行为**

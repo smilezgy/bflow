@@ -5,6 +5,7 @@ import { api } from './api.js';
 import {
   clear, el, fmtBytes, fmtTime, formatLabel, toastError, toastOk,
 } from './ui.js';
+import { thumbnail } from './lightbox.js';
 
 let query = '';
 let tag = '';
@@ -91,8 +92,7 @@ function buildGrid(assets) {
 
 function gridItem(a) {
   const item = el('div', { class: 'lib-item' });
-  item.append(el('div', { class: 'lib-thumb' },
-    el('img', { src: a.url, alt: '', loading: 'lazy' })));
+  item.append(thumbnail(a));
   const info = el('div', { class: 'lib-info' },
     el('div', { class: 'row', style: { gap: '6px' } },
       el('span', { class: 'badge mute', text: formatLabel(a.format) }),
@@ -126,9 +126,8 @@ function buildList(assets) {
   const tbody = el('tbody');
   for (const a of assets) {
     tbody.append(el('tr', {},
-      el('td', {}, el('img', {
-        src: a.url, alt: '',
-        style: { width: '44px', height: '44px', objectFit: 'cover', borderRadius: '4px', display: 'block' },
+      el('td', {}, thumbnail(a, {
+        style: { width: '44px', height: '44px', cursor: 'zoom-in' },
       })),
       el('td', {}, el('span', { class: 'badge mute', text: formatLabel(a.format) })),
       el('td', { class: 'small', text: `${a.width}×${a.height}` }),

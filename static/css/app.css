@@ -232,6 +232,50 @@ button.btn.sm { padding: 4px 9px; font-size: 12px; }
 .modal h3 { margin: 0 0 14px; font-size: 15px; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 
+/* ------------------------------------------------------ 图片预览 lightbox */
+.lightbox {
+  position: fixed; inset: 0; z-index: 10002;
+  background: rgba(8, 11, 16, .94); backdrop-filter: blur(12px);
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 14px; padding: 32px 24px;
+}
+.lightbox-stage {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  max-width: min(1100px, 94vw); max-height: 76vh;
+}
+.lightbox-stage img {
+  max-width: 100%; max-height: 76vh; object-fit: contain;
+  border-radius: 8px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+}
+.lightbox-nav {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 44px; border-radius: 50%;
+  background: rgba(255, 255, 255, .12); color: #fff;
+  border: 1px solid rgba(255, 255, 255, .2);
+  font-size: 28px; line-height: 1; cursor: pointer;
+}
+.lightbox-nav:hover { background: rgba(255, 255, 255, .24); }
+.lightbox-nav.prev { left: -56px; }
+.lightbox-nav.next { right: -56px; }
+.lightbox-close {
+  position: absolute; top: -14px; right: -14px;
+  width: 34px; height: 34px; border-radius: 50%;
+  background: rgba(255, 255, 255, .14); color: #fff;
+  border: 1px solid rgba(255, 255, 255, .2);
+  font-size: 22px; line-height: 1; cursor: pointer;
+}
+.lightbox-close:hover { background: rgba(255, 255, 255, .26); }
+.lightbox-prompt {
+  max-width: min(900px, 92vw); color: #cbd0d8; font-size: 12.5px;
+  line-height: 1.6; text-align: center;
+  max-height: 4.8em; overflow: auto;
+}
+.lightbox-meta {
+  display: flex; align-items: center; gap: 12px;
+  width: min(900px, 92vw);
+}
+.lightbox .spacer { flex: 1; }
+
 /* ---------------------------------------------------------- 表格 */
 table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 table.grid th, table.grid td {

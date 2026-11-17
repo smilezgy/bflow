@@ -315,6 +315,19 @@ async def list_tasks(limit: int = Query(50, ge=1, le=200),
     rows = query(f"SELECT * FROM task {clause} ORDER BY created_at DESC LIMIT ?",
                  params + [limit])
     items = [_task_to_dict(r) for r in rows]
+    # 任务列表也要能直接看到产物缩略图 —— 一次批量查询，避免逐条查库的 N+1。
+    if items:
+        ids = [t["task_id"] for t in items]
+        marks = ",".join("?" for _ in ids)
+        linked = query(
+            "SELECT ta.task_id, a.* FROM task_asset ta JOIN asset a"
+            f" ON a.id = ta.asset_id WHERE ta.role = 'output'"
+            f" AND ta.task_id IN ({marks}) ORDER BY ta.position", ids)
+        by_task: dict[str, list] = {}
+        for a in linked:
+            by_task.setdefault(a["task_id"], []).append(_asset_to_dict(a))
+        for t in items:
+            t["images"] = by_task.get(t["task_id"], [])
     return ok({"tasks": items})
 
 
@@ -436,7 +449,17 @@ async def list_tags():
 
 
 def _asset_to_dict(asset) -> dict:
-    d = asset.to_dict() if hasattr(asset, "to_dict") else dict(asset)
+    if hasattr(asset, "to_dict"):
+        d = asset.to_dict()
+    else:
+        # sqlite3.Row 没有 to_dict —— 直接 dict() 只会拿到数据库裸列
+        # （有 path 但没有 url），前端 <img src> 会拿到空地址，图显示不出来。
+        # 必须按 Asset.to_dict() 的同一规则补上 url/api_url。
+        row = dict(asset)
+        aid = row.get("id", "")
+        row["url"] = f"/api/assets/{aid}/raw"
+        row["api_url"] = f"/api/assets/{aid}"
+        d = row
     d["tags"] = []
     return d
 

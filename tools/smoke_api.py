@@ -102,8 +102,10 @@ def main() -> int:
     status, payload = call("PUT", f"/api/channels/{cid}/capability", {
         "model": "gpt-image-smoke",
         "capability": {
-            "output_formats": {"png": {"supported": True, "honors_request": True},
-                               "svg": {"supported": False, "honors_request": False}},
+            # 只用 PNG / JPEG 这类模型当前稳定支持的格式；不拿 svg 做冒烟
+            # （部分模型/渠道对 svg 尚不稳定，会把冒烟测试变成偶发失败）。
+            "output_formats": {"png": {"supported": False, "honors_request": False},
+                               "jpeg": {"supported": True, "honors_request": True}},
             "size_policy": "reject",
             "size_bounds": {"min_pixels": 655360, "max_pixels": 8294400,
                             "max_edge": 3840},
@@ -123,13 +125,16 @@ def main() -> int:
     check("能力表来源标记为 manual",
           any(c.get("source") == "manual" for c in caps))
 
-    print("\n[前置校验：不支持的格式应被拦下（不发请求）]")
+    print("\n[前置校验：默认 PNG + 不支持的格式应被拦下（不发请求）]")
+    # 不传 output_format → 默认按 PNG 判定；上面把 png 标为不支持，
+    # 所以这条应被拦下。这同时验证了「默认格式是 PNG」而不是别的。
     status, payload = call("POST", "/api/images/generate", {
         "prompt": "冒烟测试", "channel_id": cid, "model": "gpt-image-smoke",
-        "size": "1024x1024", "count": 1, "output_format": "svg",
+        "size": "1024x1024", "count": 1,
     })
-    check("请求不支持的 svg → 400", status == 400, str(status))
-    check("错误码为 FORMAT_NOT_SUPPORTED",
+    check("不传格式时默认走 PNG（被 png 不支持拦下）→ 400",
+          status == 400, str(status))
+    check("错误码为 FORMAT_NOT_SUPPORTED（默认格式是 PNG）",
           (payload.get("error") or {}).get("code") == "FORMAT_NOT_SUPPORTED",
           str(payload)[:200])
 

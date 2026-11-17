@@ -171,12 +171,19 @@ function applyCapability() {
   if (!fmtKeys.length) {
     c.selFormat.append(el('option', { value: 'png', text: 'PNG' }));
   } else {
-    for (const k of fmtKeys) {
+    // 把 png 排到首位并显式选中 —— 用户不手动选格式时一律默认 PNG，
+    // 不依赖能力表 JSON 的键顺序（有的渠道 svg/webp 排在前面）。
+    const ordered = fmtKeys.includes('png')
+      ? ['png', ...fmtKeys.filter((k) => k !== 'png')] : fmtKeys;
+    for (const k of ordered) {
       const info = formats[k] || {};
       const mark = info.supported === false ? '（不支持）'
         : (info.honors_request === false ? '（该渠道不保证按此格式出图）' : '');
       c.selFormat.append(el('option', { value: k, text: formatLabel(k) + mark }));
     }
+  }
+  if ([...c.selFormat.options].some((o) => o.value === 'png')) {
+    c.selFormat.value = 'png';
   }
 
   // 尺寸

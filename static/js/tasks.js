@@ -5,6 +5,7 @@ import { api } from './api.js';
 import {
   clear, el, fmtAgo, formatLabel, toastError, toastOk,
 } from './ui.js';
+import { thumbnail } from './lightbox.js';
 
 let filter = '';
 let timer = null;
@@ -69,7 +70,7 @@ async function loadTasks(body, quiet = false) {
 function buildTable(tasks) {
   const table = el('table', { class: 'grid' });
   table.append(el('thead', {}, el('tr', {},
-    el('th', { text: '状态' }), el('th', { text: '提示词' }),
+    el('th', { text: '状态' }), el('th', { text: '预览' }), el('th', { text: '提示词' }),
     el('th', { text: '渠道' }), el('th', { text: '格式（请求→实际）' }),
     el('th', { text: '说明' }), el('th', { text: '时间' }), el('th', { text: '' }),
   )));
@@ -99,8 +100,17 @@ function buildTable(tasks) {
       note.append(el('span', { class: 'dim small', text: t.actual_size || '' }));
     }
 
+    const imgs = t.images || [];
+    const preview = imgs.length
+      ? thumbnail(imgs[0], {
+          items: imgs.map((x) => ({ ...x, prompt: t.prompt })),
+          style: { width: '46px', height: '46px', cursor: 'zoom-in' },
+        })
+      : el('span', { class: 'dim small', text: '—' });
+
     tbody.append(el('tr', {},
       el('td', {}, el('span', { class: `badge ${st.badge}`, text: st.label })),
+      el('td', {}, preview),
       el('td', {}, el('div', { class: 'small', text: trunc(t.prompt, 40) }),
         t.billed ? el('span', { class: 'hint', text: '已计费' }) : null),
       el('td', { class: 'small mono', text: t.channel_id }),
@@ -147,5 +157,25 @@ async function showDetail(t) {
       el('div', { class: 'small', text: w.message }),
       w.hint ? el('div', { class: 'hint', text: w.hint }) : null));
   }
-  modal({ title: '任务详情', body, width: '560px', actions: [{ label: '关闭' }] });
+
+  // 产物图集：点击任意一张打开 lightbox 大图预览
+  const imgs = (t.images || []).map((x) => ({ ...x, prompt: t.prompt }));
+  if (imgs.length) {
+    body.append(el('div', { class: 'small hint', style: { marginTop: '8px' },
+      text: `产物 ${imgs.length} 张 · 点击预览` }));
+    const grid = el('div', { class: 'lib-grid', style: { marginTop: '6px' } });
+    for (const im of imgs) {
+      const cell = el('div', { class: 'lib-item' });
+      cell.append(thumbnail(im, { items: imgs }));
+      cell.append(el('div', { class: 'hint', style: { marginTop: '4px' },
+        text: `${formatLabel(im.format)} · ${im.width}×${im.height}` }));
+      grid.append(cell);
+    }
+    body.append(grid);
+  } else if (t.status === 'succeeded') {
+    body.append(el('div', { class: 'hint', style: { marginTop: '8px' },
+      text: '任务成功，但没有绑定的图片产物。' }));
+  }
+
+  modal({ title: '任务详情', body, width: '620px', actions: [{ label: '关闭' }] });
 }
