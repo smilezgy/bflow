@@ -1,5 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Bflow 后端 API 端到端自测（使用本地配置的真实渠道）。"""
+"""Bflow 后端 API 端到端自测（使用本地配置的真实渠道）。
+
+渠道地址与密钥**一律从本地文件读取**，不写死在代码里：
+- `channels.json` —— 渠道定义（地址、模型、协议）
+- `secrets.env`   —— 密钥
+
+这两个文件都在 .gitignore 里，不会进版本库 —— 公开仓库里不出现任何
+第三方渠道的名称与地址。
+"""
 import json
 import os
 import sys
@@ -7,17 +15,32 @@ import urllib.request
 import urllib.error
 
 BASE = os.environ.get("BFLOW_BASE", "http://127.0.0.1:8000")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def read_env(path="secrets.env"):
     env = {}
-    for line in open(path, encoding="utf-8"):
+    full = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    if not os.path.exists(full):
+        return env
+    for line in open(full, encoding="utf-8"):
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         k, v = line.split("=", 1)
         env[k.strip()] = v.strip()
     return env
+
+
+def read_channels(path="channels.json"):
+    full = path if os.path.isabs(path) else os.path.join(ROOT, path)
+    if not os.path.exists(full):
+        return {}
+    try:
+        data = json.load(open(full, encoding="utf-8"))
+    except Exception:
+        return {}
+    return data.get("channels") or data if isinstance(data, dict) else {}
 
 
 def call(method, path, payload=None, raw=None, headers=None, binary=False):
@@ -60,6 +83,25 @@ def check(name, ok, extra=""):
 
 
 env = read_env()
+channels = read_channels()
+# 挑一个可用渠道（本地配置里的第一个带密钥的）
+CHANNEL_ID = ""
+CHANNEL_BASE = ""
+CHANNEL_MODEL = ""
+CHANNEL_KEY = ""
+for cid, c in (channels.items() if isinstance(channels, dict) else []):
+    key_env = (c.get("key_env") or "").strip()
+    key = env.get(key_env, "") if key_env else ""
+    if key:
+        CHANNEL_ID = cid
+        CHANNEL_BASE = c.get("base") or c.get("base_url") or ""
+        CHANNEL_MODEL = (c.get("models") or [""])[0]
+        CHANNEL_KEY = key
+        break
+
+if not CHANNEL_ID:
+    print("找不到可用渠道：请在 channels.json 配置渠道，并在 secrets.env 填入密钥。")
+    sys.exit(2)
 
 print("=" * 66)
 print("Bflow API 端到端自测")
@@ -71,12 +113,12 @@ check("GET /channels 200", status == 200, r)
 existing = [c["id"] for c in (r.get("data") or {}).get("channels", [])]
 print(f"     现有渠道: {existing}")
 
-if "ch-a" not in existing:
+if CHANNEL_ID not in existing:
     status, r = call("POST", "/api/channels", {
-        "id": "ch-a", "display_name": "CH-A", "protocol": "openai-images",
-        "base_url": "<base-url>",
-        "api_key": env.get("CH_A_KEY", ""),
-        "models": ["gpt-image-2.6-flare"],
+        "id": CHANNEL_ID, "display_name": CHANNEL_ID, "protocol": "openai-images",
+        "base_url": CHANNEL_BASE,
+        "api_key": CHANNEL_KEY,
+        "models": [CHANNEL_MODEL],
     })
     check("POST /channels 建渠道", status == 200, r)
 
@@ -99,8 +141,8 @@ CAP = {
     "edits": {"supported": True, "max_reference_images": 3, "supports_mask": True,
               "validates_mask_content": False, "accepts_input_fidelity": True},
 }
-status, r = call("PUT", "/api/channels/ch-a/capability",
-                 {"model": "gpt-image-2.6-flare", "capability": CAP})
+status, r = call("PUT", f"/api/channels/{CHANNEL_ID}/capability",
+                 {"model": CHANNEL_MODEL, "capability": CAP})
 check("PUT capability 覆盖能力表", status == 200, r)
 check("能力来源标为 manual",
       (r.get("data") or {}).get("capabilities", [{}])[0].get("source") == "manual",
@@ -108,31 +150,31 @@ check("能力来源标为 manual",
 
 # 密钥不回传
 status, r = call("GET", "/api/channels")
-ch = next((c for c in (r.get("data") or {}).get("channels", []) if c["id"] == "ch-a"), {})
+ch = next((c for c in (r.get("data") or {}).get("channels", []) if c["id"] == CHANNEL_ID), {})
 check("密钥不回传明文", "*" in (ch.get("api_key") or "") and
-      env.get("CH_A_KEY", "") not in (ch.get("api_key") or ""), ch.get("api_key"))
+      CHANNEL_KEY not in (ch.get("api_key") or ""), ch.get("api_key"))
 
 # ---------------------------------------------------------------- 前置校验
 print("\n--- 前置校验（不应发请求、不计费）---")
 status, r = call("POST", "/api/images/generate", {
-    "prompt": "test", "channel_id": "ch-a", "model": "gpt-image-2.6-flare",
+    "prompt": "test", "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL,
     "output_format": "png", "output_compression": 50})
 check("PNG + 压缩率<100 被拦下",
       status == 400 and (r.get("error") or {}).get("code") == "INVALID_REQUEST", r)
 
 status, r = call("POST", "/api/images/generate", {
-    "prompt": "", "channel_id": "ch-a", "model": "gpt-image-2.6-flare"})
+    "prompt": "", "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL})
 check("空提示词被拦下",
       status == 400 and (r.get("error") or {}).get("code") == "PROMPT_REQUIRED", r)
 
 status, r = call("POST", "/api/images/generate", {
-    "prompt": "test", "channel_id": "ch-a", "model": "gpt-image-2.6-flare",
+    "prompt": "test", "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL,
     "output_format": "jpeg", "background": "transparent"})
 check("JPEG + 透明背景被拦下",
       status == 400 and (r.get("error") or {}).get("code") == "INVALID_REQUEST", r)
 
 status, r = call("POST", "/api/images/generate", {
-    "prompt": "test", "channel_id": "ch-a", "model": "gpt-image-2.6-flare",
+    "prompt": "test", "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL,
     "output_format": "svg", "count": 3})
 check("SVG + count=3 被拦下",
       status == 400 and (r.get("error") or {}).get("code") == "INVALID_REQUEST", r)
@@ -140,21 +182,21 @@ check("SVG + count=3 被拦下",
 # 不支持的格式（先临时把能力改成不支持 svg）
 CAP2 = json.loads(json.dumps(CAP))
 CAP2["output_formats"]["svg"] = {"supported": False, "honors_request": False}
-call("PUT", "/api/channels/ch-a/capability",
-     {"model": "gpt-image-2.6-flare", "capability": CAP2})
+call("PUT", f"/api/channels/{CHANNEL_ID}/capability",
+     {"model": CHANNEL_MODEL, "capability": CAP2})
 status, r = call("POST", "/api/images/generate", {
-    "prompt": "test", "channel_id": "ch-a", "model": "gpt-image-2.6-flare",
+    "prompt": "test", "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL,
     "output_format": "svg"})
 check("能力表标记不支持 svg 时被拦下",
       status == 400 and (r.get("error") or {}).get("code") == "FORMAT_NOT_SUPPORTED", r)
-call("PUT", "/api/channels/ch-a/capability",
-     {"model": "gpt-image-2.6-flare", "capability": CAP})
+call("PUT", f"/api/channels/{CHANNEL_ID}/capability",
+     {"model": CHANNEL_MODEL, "capability": CAP})
 
 # ---------------------------------------------------------------- 真实生图
 print("\n--- 真实生图（会计费）---")
 status, r = call("POST", "/api/images/generate", {
     "prompt": "a flat vector icon of a red apple, simple shapes, minimal, white background",
-    "channel_id": "ch-a", "model": "gpt-image-2.6-flare",
+    "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL,
     "size": "1024x1024", "output_format": "png"})
 check("生图 200", status == 200, r)
 data = r.get("data") or {}
@@ -176,7 +218,7 @@ if imgs:
 print("\n--- 格式偏差场景（渠道不 honor 时应警告而非报错）---")
 status, r = call("POST", "/api/images/generate", {
     "prompt": "a flat vector icon of a red apple, simple shapes",
-    "channel_id": "ch-a", "model": "gpt-image-2.6-flare",
+    "channel_id": CHANNEL_ID, "model": CHANNEL_MODEL,
     "size": "1024x1024", "output_format": "webp"})
 check("webp 生图 200", status == 200, r)
 d = r.get("data") or {}

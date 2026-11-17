@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from ..db import execute, query_one
 from . import assets as assets_svc
 from . import channels as channels_svc
-from .protocol import openai_images
+from .protocol import registry
+from .protocol.base import detect_deviations
 from .protocol.imaging import format_label
 
 
@@ -236,6 +237,7 @@ async def generate(req: GenerationRequest) -> GenerationOutcome:
     api_key = channels_svc.get_secret(
         query_one("SELECT * FROM channel WHERE id = ?", (req.channel_id,)))
     extra_headers = (channel.get("config") or {}).get("headers") or {}
+    channel_config = channel.get("config") or {}
 
     # 组装上游请求
     upstream_req: dict = {
@@ -258,13 +260,11 @@ async def generate(req: GenerationRequest) -> GenerationOutcome:
             upstream_req["reference_images"] = _load_reference_files(req.reference_asset_ids)
             main_id = req.reference_asset_ids[0] if req.reference_asset_ids else None
             upstream_req["masks"] = _validate_masks(req.mask_asset_ids, main_id)
-            result = await openai_images.edit(
-                channel["base_url"], api_key, upstream_req,
-                extra_headers=extra_headers)
-        else:
-            result = await openai_images.generate(
-                channel["base_url"], api_key, upstream_req,
-                extra_headers=extra_headers)
+        result = await registry.dispatch(
+            channel.get("protocol") or "openai-images",
+            channel["base_url"], api_key, upstream_req,
+            extra_headers=extra_headers, config=channel_config,
+            with_reference=has_refs)
     except Exception as exc:
         return GenerationOutcome(
             ok=False,
@@ -300,7 +300,7 @@ async def generate(req: GenerationRequest) -> GenerationOutcome:
             "requested_size": req.size,
         })
 
-    warnings = openai_images.detect_deviations(upstream_req, result.artifacts)
+    warnings = detect_deviations(upstream_req, result.artifacts)
 
     return GenerationOutcome(
         ok=True,

@@ -298,17 +298,69 @@ table.grid td.mono { font-size: 11.5px; }
 .cnode {
   position: absolute; background: var(--bg-panel);
   border: 1px solid var(--border-strong); border-radius: var(--radius-panel);
-  overflow: hidden; user-select: none; box-shadow: 0 2px 10px rgba(0,0,0,.08);
+  overflow: visible; user-select: none; box-shadow: 0 2px 10px rgba(0,0,0,.08);
 }
 .cnode.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.cnode .cnode-body { height: calc(100% - 26px); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--bg-sunken); }
+.cnode .cnode-body { height: calc(100% - 26px); overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--bg-sunken); border-radius: 0 0 var(--radius-panel) var(--radius-panel); }
 .cnode .cnode-body img { width: 100%; height: 100%; object-fit: contain; }
 .cnode .cnode-head {
   height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
   font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border);
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
 }
 .cnode .warn-dot { color: var(--warn); cursor: help; }
 .cnode .cnode-text { padding: 8px; font-size: 12px; width: 100%; height: 100%; overflow: auto; }
+
+/* 端口：拖拽建边 */
+.cnode-port {
+  position: absolute; top: 50%; width: 12px; height: 12px;
+  margin-top: -6px; border-radius: 50%;
+  background: var(--bg-panel); border: 2px solid var(--border-strong);
+  cursor: crosshair; opacity: 0; transition: opacity .15s ease;
+  z-index: 3;
+}
+.cnode:hover .cnode-port, .cnode.selected .cnode-port { opacity: 1; }
+.cnode-port:hover { border-color: var(--accent); transform: scale(1.25); }
+.cnode-port.out { right: -7px; }
+.cnode-port.in { left: -7px; }
+.cnode-port.linking { border-color: var(--accent); background: var(--accent-soft); }
+
+/* 节点头部的快捷按钮 */
+.cnode-act {
+  border: 0; background: transparent; color: var(--text-faint);
+  cursor: pointer; font-size: 12px; padding: 0 3px; line-height: 1;
+}
+.cnode-act:hover { color: var(--accent); }
+.cnode-act.busy { color: var(--accent); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+
+/* 连线 */
+.canvas-edges { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
+.canvas-edges path.edge-hit { stroke: transparent; stroke-width: 14; fill: none; pointer-events: stroke; cursor: pointer; }
+.canvas-edges path.edge-line { fill: none; stroke: var(--border-strong); stroke-width: 2; }
+.canvas-edges path.edge-line.selected { stroke: var(--accent); stroke-width: 3; }
+.canvas-edges path.edge-link { fill: none; stroke: var(--accent); stroke-width: 2; stroke-dasharray: 6 4; }
+
+/* 遮罩编辑器 */
+.mask-editor {
+  position: fixed; inset: 0; z-index: 10050;
+  background: rgba(8, 11, 16, .82);
+  display: flex; align-items: center; justify-content: center;
+}
+.mask-box {
+  background: var(--bg-panel); border-radius: var(--radius-float);
+  padding: 16px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 12px;
+  max-width: 92vw; max-height: 92vh;
+}
+.mask-stage {
+  position: relative; background: var(--bg-sunken);
+  border-radius: var(--radius-panel); overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.mask-stage canvas { display: block; max-width: 78vw; max-height: 68vh; cursor: crosshair; }
+.mask-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.mask-bar label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
 
 .canvas-side {
   width: 300px; flex: 0 0 300px; background: var(--bg-panel);

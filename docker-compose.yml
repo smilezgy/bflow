@@ -1,0 +1,33 @@
+# Bflow —— 容器编排
+#
+# 用法：
+#   docker compose up -d --build     启动
+#   docker compose logs -f bflow     看日志
+#   docker compose down              停止（数据保留在 ./data）
+#
+# 换端口：BFLOW_PORT=9000 docker compose up -d
+
+services:
+  bflow:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bflow:latest
+    container_name: bflow
+    restart: unless-stopped
+    ports:
+      - "${BFLOW_PORT:-8000}:8000"
+    volumes:
+      # 数据目录（数据库、产物、画布工程）持久化在这里
+      - ./data:/data
+    environment:
+      BFLOW_DATA_ROOT: /data
+      BFLOW_HOST: 0.0.0.0
+      BFLOW_PORT: "8000"
+      TZ: "${TZ:-Asia/Shanghai}"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

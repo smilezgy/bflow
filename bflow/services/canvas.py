@@ -89,7 +89,24 @@ def update_canvas(canvas_id: str, payload: dict) -> dict | None:
     meta = payload.get("meta") or {}
     title = payload.get("title") or row["title"]
 
-    data = {"nodes": nodes, "edges": edges,
+    # 先给没有 id 的节点补 id —— 悬空连线判定要用最终 id
+    for node in nodes:
+        if not node.get("id"):
+            node["id"] = new_id("nd")
+    valid_node_ids: set[str] = {str(n.get("id")) for n in nodes if n.get("id")}
+
+    # 悬空连线（指向不存在的节点）直接丢弃。
+    # 必须在**写工程文件之前**过滤 —— 文件才是读取时的真相来源，
+    # 只在入库时丢弃的话，文件里仍留着坏边，前端读回来还是坏的。
+    valid_edges = []
+    for edge in edges:
+        source = str(edge.get("source_id") or "")
+        target = str(edge.get("target_id") or "")
+        if source not in valid_node_ids or target not in valid_node_ids:
+            continue
+        valid_edges.append(edge)
+
+    data = {"nodes": nodes, "edges": valid_edges,
             "meta": {**meta, "updated_at": now}}
     rel = _write_file(canvas_id, data)
 
@@ -97,11 +114,8 @@ def update_canvas(canvas_id: str, payload: dict) -> dict | None:
     execute("DELETE FROM canvas_node WHERE canvas_id = ?", (canvas_id,))
     execute("DELETE FROM canvas_edge WHERE canvas_id = ?", (canvas_id,))
 
-    # 先落节点，收集有效节点 id；悬空连线直接丢弃（不因为一条坏边导致整次保存失败）
-    valid_node_ids: set[str] = set()
     for idx, node in enumerate(nodes):
-        nid = node.get("id") or new_id("nd")
-        valid_node_ids.add(nid)
+        nid = node["id"]
         execute(
             "INSERT OR REPLACE INTO canvas_node (id, canvas_id, type, x, y, width,"
             " height, z_index, data_json, asset_id, created_at, updated_at)"
@@ -113,16 +127,13 @@ def update_canvas(canvas_id: str, payload: dict) -> dict | None:
              json.dumps(node.get("data") or {}, ensure_ascii=False),
              node.get("asset_id"), now, now),
         )
-    for edge in edges:
-        source = edge.get("source_id") or ""
-        target = edge.get("target_id") or ""
-        if source not in valid_node_ids or target not in valid_node_ids:
-            continue          # 悬空连线：丢弃
+    for edge in valid_edges:
         eid = edge.get("id") or new_id("eg")
         execute(
             "INSERT OR REPLACE INTO canvas_edge (id, canvas_id, source_id, target_id,"
             " label, data_json) VALUES (?,?,?,?,?,?)",
-            (eid, canvas_id, source, target, edge.get("label"),
+            (eid, canvas_id, str(edge.get("source_id") or ""),
+             str(edge.get("target_id") or ""), edge.get("label"),
              json.dumps(edge.get("data") or {}, ensure_ascii=False)),
         )
     execute("UPDATE canvas SET title = ?, path = ?, updated_at = ? WHERE id = ?",

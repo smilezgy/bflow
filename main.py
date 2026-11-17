@@ -73,14 +73,28 @@ app = create_app()
 
 
 def main() -> None:
+    import argparse
     import uvicorn
+
+    parser = argparse.ArgumentParser(prog="bflow", description="Bflow —— AI 多模态创作工作台")
+    parser.add_argument("--host", default=None, help="监听地址（默认 127.0.0.1）")
+    parser.add_argument("--port", type=int, default=None, help="监听端口（默认 8000）")
+    parser.add_argument("--data-root", default=None, help="数据目录")
+    parser.add_argument("--reload", action="store_true", help="开发模式：代码变更自动重载")
+    args = parser.parse_args()
+
+    if args.data_root:
+        settings.set_data_root(args.data_root)
+    host = args.host or settings.host
+    port = args.port or settings.port
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
-    print(f"Bflow {APP_VERSION} → http://{settings.host}:{settings.port}")
+    print(f"Bflow {APP_VERSION} → http://{host}:{port}/")
     print(f"数据目录: {settings.data_root}")
-    uvicorn.run(app, host=settings.host, port=settings.port,
+    uvicorn.run(app, host=host, port=port, reload=args.reload,
                 ws_ping_interval=None, ws_ping_timeout=None)
 
 

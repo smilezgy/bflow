@@ -18,30 +18,12 @@ from typing import Any
 
 from ..db import execute, execute_many, query, query_one, transaction
 from .credentials import decrypt, encrypt, mask
+from .protocol import registry
 
-# 兜底能力表：用户未验证渠道时使用，标注 source=default
-DEFAULT_CAPABILITY: dict[str, Any] = {
-    "output_formats": {
-        "png": {"supported": True, "honors_request": True},
-        "jpeg": {"supported": True, "honors_request": True},
-    },
-    "size_policy": "reject",
-    "size_bounds": {"min_pixels": 655360, "max_pixels": 8294400, "max_edge": 3840},
-    "quality_levels": ["auto", "low", "medium", "high"],
-    "complexity_levels": ["auto", "low", "medium", "high"],
-    "backgrounds": ["auto", "transparent", "opaque"],
-    "transparent_formats": ["png", "webp"],
-    "compression_by_format": {"png": None, "jpeg": [0, 100], "webp": [0, 100]},
-    "ignores_unknown_params": True,
-    "edits": {
-        "supported": False,
-        "max_reference_images": 0,
-        "supports_mask": False,
-        "validates_mask_content": False,
-        "accepts_input_fidelity": False,
-    },
-    "notes": ["默认能力表未经实测，请点「验证」以获取真实能力。"],
-}
+# 兜底能力表：用户未验证渠道时使用，标注 source=default。
+# 具体内容由协议决定（见 protocol/registry.py）—— OpenAI 协议能力最全，
+# 工作流类协议只能声明「格式由工作流决定」。
+DEFAULT_CAPABILITY: dict[str, Any] = registry.default_capability("openai-images")
 
 
 def new_id(prefix: str) -> str:
@@ -100,21 +82,23 @@ def create_channel(data: dict) -> dict:
     now = time.time()
     secret = (data.get("api_key") or "").strip()
     cred_id = _put_credential(secret) if secret else None
+    protocol = data.get("protocol") or "openai-images"
     execute(
         "INSERT INTO channel (id, display_name, protocol, base_url, enabled,"
         " config_json, credential_id, created_at, updated_at)"
         " VALUES (?,?,?,?,?,?,?,?,?)",
         (cid,
          data.get("display_name") or cid,
-         data.get("protocol") or "openai-images",
+         protocol,
          (data.get("base_url") or "").rstrip("/"),
          1 if data.get("enabled", True) else 0,
          json.dumps(data.get("config") or {}, ensure_ascii=False),
          cred_id, now, now),
     )
-    # 兜底能力表
+    # 兜底能力表：按协议给不同的默认值
+    fallback = registry.default_capability(protocol)
     for model in (data.get("models") or []):
-        set_capability(cid, model, DEFAULT_CAPABILITY, source="default")
+        set_capability(cid, model, fallback, source="default")
     return get_channel(cid)  # type: ignore[return-value]
 
 
@@ -172,10 +156,13 @@ def _channel_to_dict(row) -> dict:
     except Exception:
         cfg = {}
     secret = get_secret(row)
+    protocol = row["protocol"]
     return {
         "id": row["id"],
         "display_name": row["display_name"],
-        "protocol": row["protocol"],
+        "protocol": protocol,
+        "protocol_label": registry.label(protocol),
+        "protocol_known": registry.is_known(protocol),
         "base_url": row["base_url"],
         "enabled": bool(row["enabled"]),
         "config": cfg,
@@ -209,7 +196,10 @@ def set_capability(channel_id: str, model: str, capability: dict,
 
 
 def get_capability(channel_id: str, model: str) -> dict:
-    """取能力：优先该模型的能力表，没有则取该渠道任意一条，再没有用兜底。"""
+    """取能力：优先该模型的能力表，没有则取该渠道任意一条，再没有用兜底。
+
+    兜底表按**渠道协议**给 —— 工作流类协议的默认能力与 OpenAI 协议不同。
+    """
     row = query_one(
         "SELECT * FROM channel_capability WHERE channel_id = ? AND model = ?",
         (channel_id, model))
@@ -218,14 +208,20 @@ def get_capability(channel_id: str, model: str) -> dict:
             "SELECT * FROM channel_capability WHERE channel_id = ? LIMIT 1",
             (channel_id,))
     if not row:
-        return {**DEFAULT_CAPABILITY, "source": "default", "verified_at": None}
+        ch = query_one("SELECT protocol FROM channel WHERE id = ?", (channel_id,))
+        protocol = ch["protocol"] if ch else "openai-images"
+        return registry.default_capability(protocol)
 
     try:
         cap = json.loads(row["capability_json"])
     except Exception:
-        cap = dict(DEFAULT_CAPABILITY)
+        cap = {}
     # 兜底补齐缺失字段，避免旧数据导致前端崩
-    for key, value in DEFAULT_CAPABILITY.items():
+    ch = query_one("SELECT protocol FROM channel WHERE id = ?", (channel_id,))
+    protocol = ch["protocol"] if ch else "openai-images"
+    for key, value in registry.default_capability(protocol).items():
+        if key in ("source", "verified_at"):
+            continue
         cap.setdefault(key, value)
     cap["source"] = row["source"]
     cap["verified_at"] = row["verified_at"]

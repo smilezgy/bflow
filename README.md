@@ -18,11 +18,24 @@ run.bat
 
 # Linux / macOS
 ./start.sh
+
+# 桌面端（原生窗口，WebView2 / 系统 WebView）
+pip install -r requirements-desktop.txt
+python desktop.py
+
+# 容器
+docker compose up -d --build
 ```
 
 启动后访问 <http://127.0.0.1:8000/>。
 
 首次使用：进入「渠道」→ 新增渠道（地址 + API Key）→ 编辑能力表 → 回工作台生成。
+
+### 命令行参数
+
+```bash
+python main.py --host 0.0.0.0 --port 9000 --data-root /data
+```
 
 ### 环境变量
 
@@ -37,13 +50,17 @@ run.bat
 
 ## 本目录的定位
 
-这是 **P0 阶段**的工作区，当前只包含两样东西：
+这是 **clean-room 重写**项目的完整实现 —— 规格文档与可运行程序都在这里：
 
 | 内容 | 用途 |
 |---|---|
-| `spec/` | **规格文档** —— clean-room 重写的唯一知识来源 |
+| `spec/` | **规格文档** —— 实现的唯一知识来源 |
+| `bflow/` | 后端（FastAPI + SQLite + 多协议适配层）|
+| `static/` | 前端（原生 ES 模块，无构建步骤）|
 | `tools/probe_platforms.py` | 黑盒探测工具（产出规格数据的手段）|
-| `probe-data/` | 探测原始数据（JSON），规格文档的事实底稿 |
+| `tools/selftest_protocols.py` | 多协议离线自测（假上游，零费用）|
+| `tools/smoke_api.py` | API 冒烟测试（零费用）|
+| `tools/selftest_api.py` | 端到端自测（含真实生图，会计费）|
 
 > **不包含任何被参考项目的源码**。规格文档只描述**可观察行为**
 > （HTTP 状态、报文原文、产物格式/尺寸），不含代码表达。
@@ -141,6 +158,40 @@ run.bat
 | **P1** 规格补全 | ✅ 完成 | `spec/03`（API 契约）、`spec/04`（数据模型）、`spec/05`（UI IA）|
 | **P1** edits 链路探测 | ✅ 完成 | 单参考图 / 多参考图 / 参数矩阵 / mask 行为 |
 | **P2** 完整实现 | ✅ 完成 | 后端（FastAPI + SQLite）、前端（原生 ES 模块）、启动脚本、自测脚本 |
+| **P3-A** 协议扩展 | ✅ 完成 | 协议注册表 + Gemini / 方舟 / APIMart / ComfyUI / RunningHub 五个适配器 |
+| **P3-B** 画布增强 | ✅ 完成 | 拖线建边、节点就地生成、遮罩局部编辑 |
+| **P3-C** 打包分发 | ✅ 完成 | Dockerfile / compose / 桌面端 / CI |
+
+### P3 交付内容
+
+**P3-A 协议扩展**
+
+| 协议 | 说明 |
+|---|---|
+| `openai-images` | 原有协议，行为不变 |
+| `gemini` | Google Generative Language；尺寸用宽高比表达；产物在 `inlineData` |
+| `ark` | 火山方舟；**提交 + 轮询**；参考图以 base64 传入 |
+| `apimart` | 异步任务；参数按模型不同，通过渠道配置透传 |
+| `comfyui` | 工作流协议；渠道配置里给工作流 JSON，提示词写入指定节点 |
+| `runninghub` | 工作流协议；给 `workflow_id` + 提示词节点 id |
+
+各协议的**天然能力**如实写进默认能力表（工作流类协议格式由工作流决定 →
+`honors_request: false`），前端据此显示选项与提示。
+
+**P3-B 画布增强**
+
+- **拖线建边**：节点左右两侧端口，拖到目标节点即建边；点击连线可选中并删除
+- **节点就地生成**：节点头栏 ⚡ 按钮，结果直接落进该节点
+- **遮罩局部编辑**：涂绘遮罩（涂掉=要改的区域），只提交该区域
+
+**P3-C 打包分发**
+
+| 形式 | 入口 |
+|---|---|
+| 容器 | `Dockerfile` + `docker-compose.yml`（非 root、健康检查、数据卷 `/data`）|
+| 桌面端 | `desktop.py`（pywebview 原生窗口）+ `packaging/Bflow.spec`（PyInstaller）|
+| CI | `.github/workflows/ci.yml`（多平台自测 + 镜像构建）|
+
 
 ### P2 交付内容
 

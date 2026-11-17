@@ -100,11 +100,13 @@ async def verify_channel(channel_id: str):
 
     secret = channels_svc.get_secret(
         query_one("SELECT * FROM channel WHERE id = ?", (channel_id,)))
-    from ..services.protocol import openai_images
+    from ..services.protocol import registry
 
     req = {"model": model, "prompt": "a flat vector icon of a red apple, simple shapes",
            "size": "1024x1024", "output_format": "png"}
-    result = await openai_images.generate(ch["base_url"], secret, req)
+    result = await registry.dispatch(
+        ch.get("protocol") or "openai-images", ch["base_url"], secret, req,
+        config=ch.get("config") or {})
 
     if not result.ok:
         err = result.error
@@ -413,3 +415,13 @@ async def app_info():
         "name": "Bflow",
         "update": {"channel": "none"},
     })
+
+
+# ================================================================== 协议清单
+
+
+@router.get("/protocols")
+async def list_protocols():
+    """可用协议清单 —— 渠道编辑界面用。"""
+    from ..services.protocol import registry
+    return ok({"protocols": registry.catalog()})

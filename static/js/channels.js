@@ -55,7 +55,7 @@ function chCard(ch) {
 
   card.append(el('div', { class: 'ch-meta' },
     el('div', { class: 'mono', text: maskUrl(ch.base_url) }),
-    el('div', {}, `协议 ${ch.protocol} · 模型 ${(ch.models || []).length} 个`),
+    el('div', {}, `协议 ${ch.protocol_label || ch.protocol} · 模型 ${(ch.models || []).length} 个`),
   ));
 
   // 输出格式能力
@@ -149,21 +149,121 @@ async function doDelete(ch) {
 
 // ---------------------------------------------------------------- 编辑渠道
 
-function openEditor(ch) {
+/** 各协议的额外配置项说明 —— 协议差异很大，配置项也不同。 */
+const PROTOCOL_FIELDS = {
+  'openai-images': [],
+  'gemini': [
+    ['aspect_ratio', '宽高比', '1:1 / 3:2 / 2:3 / 16:9 / 9:16', '留空则按所选尺寸推导'],
+    ['image_size', '图像尺寸档', '1K / 2K', '部分模型支持'],
+  ],
+  'ark': [
+    ['size', '尺寸', '1024x1024 或 2K / 4K', '留空则用所选尺寸'],
+    ['response_format', '响应格式', 'url / b64_json', '默认 url'],
+    ['watermark', '加水印', 'true / false', '留空则不设置'],
+    ['max_reference_images', '参考图上限', '数字', '默认 10'],
+  ],
+  'apimart': [
+    ['aspect_ratio', '宽高比', '1:1 / 16:9 ...', '部分模型支持'],
+    ['num_images', '生成数量', '数字', '留空则用所选数量'],
+    ['output_format', '产物格式', 'png / jpeg', '按模型而定'],
+  ],
+  'comfyui': [
+    ['prompt_node', '提示词节点 id', '如 6', 'CLIPTextEncode 节点的编号'],
+    ['image_node', '参考图节点 id', '如 10', 'LoadImage 节点的编号'],
+    ['size_node', '尺寸节点 id', '如 5', 'EmptyLatentImage 节点的编号'],
+    ['seed_node', '种子节点 id', '如 3', 'KSampler 节点的编号'],
+  ],
+  'runninghub': [
+    ['workflow_id', '工作流 id', '数字', '必填'],
+    ['prompt_node', '提示词节点 id', '如 12', '必填'],
+    ['negative_prompt', '负向提示词', '文本', '可选'],
+  ],
+};
+
+async function openEditor(ch) {
   const isNew = !ch;
+  let protocols = [];
+  try {
+    const d = await api.protocols();
+    protocols = d.protocols || [];
+  } catch { /* 兜底用内置列表 */ }
+  if (!protocols.length) {
+    protocols = [{ id: 'openai-images', label: 'OpenAI Images', hint: '' }];
+  }
+
   const f = {
     display_name: el('input', { type: 'text', value: ch?.display_name || '' }),
     base_url: el('input', { type: 'text', value: ch?.base_url || '', placeholder: 'https://example.com' }),
     api_key: el('input', { type: 'password', value: '', placeholder: isNew ? '必填' : '留空则不修改' }),
-    protocol: el('select', {},
-      el('option', { value: 'openai-images', text: 'OpenAI Images' })),
+    protocol: el('select', {}),
+    protocolHint: el('div', { class: 'hint', text: '' }),
+    configBox: el('div', { class: 'col' }),
   };
+
+  for (const p of protocols) {
+    f.protocol.append(el('option', { value: p.id, text: p.label }));
+  }
+  f.protocol.value = ch?.protocol || 'openai-images';
+
+  // 协议专属配置
+  const cfgInputs = {};
+  const renderConfigFields = () => {
+    const pid = f.protocol.value;
+    const rows = PROTOCOL_FIELDS[pid] || [];
+    clear(f.configBox);
+    if (!rows.length) {
+      f.configBox.append(el('div', { class: 'hint', text: '该协议无需额外配置。' }));
+      return;
+    }
+    f.configBox.append(el('div', { class: 'panel-title', text: '协议参数' }));
+    for (const [key, label, placeholder, hint] of rows) {
+      const input = el('input', { type: 'text', placeholder });
+      const existing = (ch?.config || {})[key];
+      if (existing !== undefined && existing !== null) input.value = String(existing);
+      cfgInputs[key] = input;
+      f.configBox.append(el('label', { class: 'field' }, label, input,
+        hint ? el('div', { class: 'hint', text: hint }) : null));
+    }
+  };
+
+  // ComfyUI 需要工作流模板（大段 JSON），单独给一个多行输入
+  const workflowBox = el('textarea', {
+    placeholder: '{ "3": {"class_type": "KSampler", ...} }',
+    style: { minHeight: '120px', fontFamily: 'var(--mono)' },
+  });
+  const existingWorkflow = ch?.config?.workflow;
+  if (typeof existingWorkflow === 'string') workflowBox.value = existingWorkflow;
+  else if (existingWorkflow && typeof existingWorkflow === 'object') {
+    workflowBox.value = JSON.stringify(existingWorkflow, null, 2);
+  }
+
+  const renderWorkflow = () => {
+    const isComfy = f.protocol.value === 'comfyui';
+    f.configBox.querySelectorAll('[data-wf]').forEach((n) => n.remove());
+    if (!isComfy) return;
+    f.configBox.append(el('label', { class: 'field' }, '工作流模板（JSON）',
+      workflowBox,
+      el('div', { class: 'hint', text: '整份工作流贴进来即可；提示词会写入指定的 CLIPTextEncode 节点。' })));
+  };
+
+  f.protocol.addEventListener('change', () => {
+    const p = protocols.find((x) => x.id === f.protocol.value);
+    f.protocolHint.textContent = p?.hint || '';
+    renderConfigFields();
+    renderWorkflow();
+  });
+  const initial = protocols.find((x) => x.id === f.protocol.value);
+  f.protocolHint.textContent = initial?.hint || '';
+  renderConfigFields();
+  renderWorkflow();
 
   const body = el('div', { class: 'col' },
     el('label', { class: 'field' }, '显示名', f.display_name),
     el('label', { class: 'field' }, '渠道地址', f.base_url),
     el('label', { class: 'field' }, 'API Key', f.api_key),
     el('label', { class: 'field' }, '协议', f.protocol),
+    f.protocolHint,
+    f.configBox,
     el('div', { class: 'hint', text: '渠道名与地址仅用于你自己识别；公开场合建议用代号。' }),
   );
 
@@ -178,10 +278,30 @@ function openEditor(ch) {
           if (!f.base_url.value.trim()) { toastInfo('请填写渠道地址。'); return false; }
           if (isNew && !f.api_key.value.trim()) { toastInfo('请填写 API Key。'); return false; }
           try {
+            const config = { ...(ch?.config || {}) };
+            for (const [key, input] of Object.entries(cfgInputs)) {
+              const v = input.value.trim();
+              if (v) config[key] = v;
+              else delete config[key];
+            }
+            if (f.protocol.value === 'comfyui') {
+              const raw = workflowBox.value.trim();
+              if (raw) {
+                try {
+                  config.workflow = JSON.parse(raw);
+                } catch {
+                  toastInfo('工作流模板不是合法 JSON。');
+                  return false;
+                }
+              } else {
+                delete config.workflow;
+              }
+            }
             const payload = {
               display_name: f.display_name.value.trim() || undefined,
               base_url: f.base_url.value.trim(),
               protocol: f.protocol.value,
+              config,
             };
             if (f.api_key.value.trim()) payload.api_key = f.api_key.value.trim();
             if (isNew) await api.channelCreate(payload);

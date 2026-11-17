@@ -1,0 +1,6 @@
+# Bflow 桌面端依赖（与 requirements.txt 分开 —— GUI 依赖体积大且平台相关）
+#
+# Windows 需要 WebView2 运行时（Win10 21H2+ / Win11 自带；旧系统需单独安装：
+# https://developer.microsoft.com/microsoft-edge/webview2/）
+pywebview>=5.3
+pyinstaller>=6.6 ; extra == "build"

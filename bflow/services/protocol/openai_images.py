@@ -15,36 +15,17 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
-from .errors import NormalizedError, normalize
-from .imaging import ImageInfo, format_label, parse_image
+from .base import (DEFAULT_TIMEOUT, MAX_ARTIFACT_BYTES, Artifact, UpstreamResult,
+                   base_headers, detect_deviations, download, endpoint_url,
+                   error_result, make_artifact, post_json, timeout_result)
+from .errors import NormalizedError
 
-DEFAULT_TIMEOUT = 300.0
-MAX_ARTIFACT_BYTES = 64 * 1024 * 1024
-
-
-@dataclass
-class Artifact:
-    """一份产物。"""
-    data: bytes
-    info: ImageInfo
-    source_url: str = ""
-
-
-@dataclass
-class UpstreamResult:
-    """一次上游调用的完整结果。"""
-    ok: bool
-    status: int
-    artifacts: list[Artifact] = field(default_factory=list)
-    error: NormalizedError | None = None
-    raw_body: str = ""
-    usage: dict = field(default_factory=dict)
-    elapsed: float = 0.0
+# 兼容旧引用：其他模块从本模块取 Artifact / UpstreamResult / detect_deviations
+__all__ = ["Artifact", "UpstreamResult", "detect_deviations", "generate", "edit"]
 
 
 def _build_generation_payload(req: dict) -> dict:
@@ -143,17 +124,12 @@ async def _extract_artifacts(data: dict, client: httpx.AsyncClient) -> list[Arti
         elif item.get("url"):
             source_url = item["url"]
             try:
-                resp = await client.get(source_url, timeout=120.0)
-                resp.raise_for_status()
-                raw = resp.content
+                raw = await download(client, source_url)
             except Exception:
                 raw = b""
-        if not raw:
-            continue
-        if len(raw) > MAX_ARTIFACT_BYTES:
-            continue
-        artifacts.append(Artifact(data=raw, info=parse_image(raw),
-                                  source_url=source_url))
+        artifact = make_artifact(raw, source_url)
+        if artifact:
+            artifacts.append(artifact)
     return artifacts
 
 
@@ -165,39 +141,21 @@ async def _post(client: httpx.AsyncClient, url: str, *,
     import time
     started = time.time()
     try:
-        if json_body is not None:
-            resp = await client.post(url, headers=headers, json=json_body, timeout=timeout)
-        else:
-            # multipart：字段与文件分开传；值统一转字符串
-            data = {k: str(v) for k, v in (fields or {}).items()}
-            multipart = [(name, (fname, content, "application/octet-stream"))
-                         for name, fname, content in (files or [])]
-            resp = await client.post(url, headers=headers, data=data,
-                                     files=multipart or None, timeout=timeout)
+        resp = await post_json(client, url, headers=headers, json_body=json_body,
+                                form=fields, files=files, timeout=timeout)
     except httpx.TimeoutException:
-        return UpstreamResult(
-            ok=False, status=0, elapsed=time.time() - started,
-            error=NormalizedError(code="UPSTREAM_TIMEOUT",
-                                  message="上游响应超时。",
-                                  hint="请稍后重试。", retryable=True))
+        return timeout_result(time.time() - started)
     except Exception as exc:
-        return UpstreamResult(
-            ok=False, status=0, elapsed=time.time() - started,
-            error=NormalizedError(code="CHANNEL_INTERNAL_ERROR",
-                                  message=f"无法连接渠道：{type(exc).__name__}",
-                                  hint="请检查渠道地址与网络连通性。",
-                                  retryable=True))
+        from .base import connection_error
+        return connection_error(exc, time.time() - started)
 
     elapsed = time.time() - started
     raw_text = resp.text or ""
 
     if resp.status_code != 200:
-        err = normalize(resp.status_code, raw_text,
-                        requested_format=(json_body or fields or {}).get("output_format", ""),
-                        requested_size=(json_body or fields or {}).get("size", ""),
-                        raw_error=raw_text)
-        return UpstreamResult(ok=False, status=resp.status_code, error=err,
-                              raw_body=raw_text[:2000], elapsed=elapsed)
+        return error_result(resp.status_code, raw_text, elapsed=elapsed,
+                            requested_format=(json_body or fields or {}).get("output_format", ""),
+                            requested_size=(json_body or fields or {}).get("size", ""))
 
     try:
         data = resp.json()
@@ -220,10 +178,11 @@ async def _post(client: httpx.AsyncClient, url: str, *,
 
 async def generate(base_url: str, api_key: str, req: dict, *,
                    timeout: float = DEFAULT_TIMEOUT,
-                   extra_headers: dict | None = None) -> UpstreamResult:
+                   extra_headers: dict | None = None,
+                   config: dict | None = None) -> UpstreamResult:
     """文生图。"""
-    url = _endpoint_url(base_url, "images/generations")
-    headers = _headers(api_key, extra_headers)
+    url = endpoint_url(base_url, "images/generations")
+    headers = base_headers(api_key, extra_headers)
     payload = _build_generation_payload(req)
     async with httpx.AsyncClient(follow_redirects=True) as client:
         return await _post(client, url, headers=headers, json_body=payload, timeout=timeout)
@@ -231,10 +190,11 @@ async def generate(base_url: str, api_key: str, req: dict, *,
 
 async def edit(base_url: str, api_key: str, req: dict, *,
                timeout: float = DEFAULT_TIMEOUT,
-               extra_headers: dict | None = None) -> UpstreamResult:
+               extra_headers: dict | None = None,
+               config: dict | None = None) -> UpstreamResult:
     """带参考图编辑。"""
-    url = _endpoint_url(base_url, "images/edits")
-    headers = _headers(api_key, extra_headers)
+    url = endpoint_url(base_url, "images/edits")
+    headers = base_headers(api_key, extra_headers)
     fields, files = _build_edit_fields(req)
     async with httpx.AsyncClient(follow_redirects=True) as client:
         return await _post(client, url, headers=headers, fields=fields,
@@ -242,59 +202,8 @@ async def edit(base_url: str, api_key: str, req: dict, *,
 
 
 def _endpoint_url(base_url: str, endpoint: str) -> str:
-    base = (base_url or "").rstrip("/")
-    if not base:
-        raise ValueError("渠道地址为空")
-    # base 可能自带 /v1（实测存在这种配置）
-    if base.endswith("/v1"):
-        return f"{base}/{endpoint}"
-    return f"{base}/v1/{endpoint}"
+    return endpoint_url(base_url, endpoint)
 
 
 def _headers(api_key: str, extra: dict | None = None) -> dict:
-    headers = {"Accept": "application/json", "User-Agent": "Bflow/1.0"}
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if extra:
-        headers.update({k: v for k, v in extra.items() if v})
-    return headers
-
-
-# ------------------------------------------------------------------ 偏差检测
-
-
-def detect_deviations(req: dict, artifacts: list[Artifact]) -> list[dict]:
-    """检测产物与请求的偏差，产出警告列表。
-
-    这是 Bflow 的核心差异化能力（spec/05-ui-ia.md §3.3）：
-    产物有效，但与用户选择不同 —— 必须让用户知道。
-    """
-    warnings: list[dict] = []
-    if not artifacts:
-        return warnings
-
-    requested_format = (req.get("output_format") or "").lower()
-    requested_size = (req.get("size") or "").lower()
-
-    info = artifacts[0].info
-    actual_format = info.format
-    actual_size = info.size_label
-
-    if requested_format and actual_format and actual_format != requested_format:
-        warnings.append({
-            "code": "FORMAT_NOT_HONORED",
-            "message": (f"你选择了 {format_label(requested_format)} 格式，"
-                        f"但上游实际返回的是 {format_label(actual_format)}。"),
-            "hint": f"如需 {format_label(requested_format)}，请换一个支持该格式的渠道。",
-            "actual": {"format": actual_format},
-        })
-
-    if requested_size and actual_size and actual_size != requested_size:
-        warnings.append({
-            "code": "SIZE_NORMALIZED",
-            "message": f"你请求了 {requested_size}，该渠道输出为 {actual_size}。",
-            "hint": "产物尺寸由渠道决定，如需精确尺寸请更换渠道或调整请求。",
-            "actual": {"width": info.width, "height": info.height},
-        })
-
-    return warnings
+    return base_headers(api_key, extra)

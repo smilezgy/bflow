@@ -1,0 +1,29 @@
+# 版本控制与构建不需要的内容
+.git
+.github
+.gitignore
+.workbuddy
+
+# 运行时数据（本地数据不进镜像）
+data/
+probe-data/
+*.db
+*.key
+channels.json
+secrets.env
+secrets.env.*
+
+# 开发产物
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.spec.bak
+
+# 探针与临时文件
+static/__probe*.js
+static/__diag*.js
+tmp*/
+*.log

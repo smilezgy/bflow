@@ -55,6 +55,7 @@ export const api = {
   channelDelete: (id) => request('DELETE', `/api/channels/${id}`),
   capabilityPut: (id, b) => request('PUT', `/api/channels/${id}/capability`, b),
   channelVerify: (id) => request('POST', `/api/channels/${id}/verify`),
+  protocols: () => request('GET', '/api/protocols'),
 
   // --- 生图 ---
   generate: (b, o) => request('POST', '/api/images/generate', b, o),
