@@ -4,9 +4,34 @@
 >
 > 目标：独立品牌、可商用、不受上游更新干扰。
 >
-> 状态：**P0 规格阶段** —— 尚未包含可运行的应用程序。
+> 状态：**P2 已实现** —— 可运行的完整应用（工作台 / 画布 / 素材库 / 任务中心 / 渠道管理 / 设置）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+---
+
+## 快速开始
+
+```bash
+# Windows
+run.bat
+
+# Linux / macOS
+./start.sh
+```
+
+启动后访问 <http://127.0.0.1:8000/>。
+
+首次使用：进入「渠道」→ 新增渠道（地址 + API Key）→ 编辑能力表 → 回工作台生成。
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `BFLOW_HOST` | `127.0.0.1` | 监听地址 |
+| `BFLOW_PORT` | `8000` | 监听端口 |
+| `BFLOW_DATA_ROOT` | 按系统惯例 | 数据根目录 |
+| `BFLOW_MASTER_KEY` | 自动生成 | 密钥加密主密钥 |
 
 ---
 
@@ -115,7 +140,26 @@
 | **P0** 渠道行为规格 | ✅ 完成 | `spec/01`、`spec/02`、探测工具 |
 | **P1** 规格补全 | ✅ 完成 | `spec/03`（API 契约）、`spec/04`（数据模型）、`spec/05`（UI IA）|
 | **P1** edits 链路探测 | ✅ 完成 | 单参考图 / 多参考图 / 参数矩阵 / mask 行为 |
-| **P2** 骨架 | ⬜ 待开始 | 可启动的应用、配置存储、CI |
+| **P2** 完整实现 | ✅ 完成 | 后端（FastAPI + SQLite）、前端（原生 ES 模块）、启动脚本、自测脚本 |
+
+### P2 交付内容
+
+| 层 | 内容 |
+|---|---|
+| 后端 | FastAPI 应用、SQLite 存储层（13 表 + 迁移机制）、协议适配层（OpenAI Images + 魔数解析 + 错误归一化）、服务层（渠道/能力表/生图/资源/画布/配置）|
+| 前端 | 6 个视图：工作台（快速生成）、画布（无限画布 + 节点 + 连线）、素材库、任务中心、渠道管理、设置；原生 ES 模块，无构建步骤 |
+| 存储 | SQLite + 文件系统混合，产物按魔数定扩展名，密钥 AES-256-GCM 加密 |
+| 自测 | `tools/selftest_api.py` —— 21 项断言，覆盖前置校验、真实生图、格式偏差、任务、资源、画布、配置 |
+
+**落地 P0/P1 规格的关键决策**：
+
+| 规格条款 | 实现位置 |
+|---|---|
+| 不降级格式 / 不篡改尺寸 / 不丢弃产物 / 不隐藏偏差 | `services/generation.py` + `protocol/openai_images.py` |
+| 产物格式一律按魔数判定 | `services/protocol/imaging.py` |
+| 格式/尺寸偏差返回 200 + 警告 | `api/routes.py` 的 `warnings` 字段 |
+| 前置校验拦下注定失败的请求（省额度）| `services/generation.py::validate_request` |
+| 错误码服务端归一化 | `services/protocol/errors.py` |
 
 ### P1 edits 链路实测结论
 
