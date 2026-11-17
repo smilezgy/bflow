@@ -76,6 +76,9 @@ jobs:
       - name: 前端运行时巡检（jsdom 真实求值模块图）
         run: node tools/frontend_check.mjs http://127.0.0.1:8000
 
+      - name: 图片预览组件自测（jsdom）
+        run: node tools/frontend_lightbox_check.mjs
+
   docker:
     name: 镜像构建
     runs-on: ubuntu-latest
